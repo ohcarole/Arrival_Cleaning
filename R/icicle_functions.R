@@ -1,4 +1,4 @@
-## ----knit_setup, include=FALSE-----------------------------------------------------------------------------------------------------------------
+## ----knit_setup, include=FALSE----------------------------------------------------------------------------------------------------------------
 knitr::opts_chunk$set(message = FALSE, results = 'hide', fig.show = 'asis')
 tryCatch({
   # Attempt to set the root using rprojroot
@@ -25,7 +25,7 @@ datadir     <<- paste0(onedir, '/data')
 
 
 
-## ----message=FALSE, warning=FALSE--------------------------------------------------------------------------------------------------------------
+## ----message=FALSE, warning=FALSE-------------------------------------------------------------------------------------------------------------
 set_packages <- function(silent=TRUE) {
   # List of required packages
   packages <- c(
@@ -86,13 +86,13 @@ set_packages <- function(silent=TRUE) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 get_user <- function() {
   strsplit(system("whoami", intern = TRUE), "\\\\")[[1]][2]
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Helper Function to Retrieve or Set a Keyring Service
 manage_keyring <- function(keyring = 'icicle', action = 'get') {
   service  <- paste0(keyring, '_service')
@@ -113,7 +113,7 @@ manage_keyring <- function(keyring = 'icicle', action = 'get') {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Function to Unlock the Keyring
 unlock_keyring <- function(keyring = 'icicle') {
   service  <- paste0(keyring, '_service')
@@ -126,7 +126,7 @@ unlock_keyring <- function(keyring = 'icicle') {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Internal function to Set a Keyring
 .set_keyring <- function(keyring = 'icicle') {
   pass <- manage_keyring(keyring, action = 'set')
@@ -135,7 +135,7 @@ unlock_keyring <- function(keyring = 'icicle') {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Function to Retrieve Encryption Key
 get_encryptkey <- function(keyring = 'icicle') {
   if (!exists("encryptkey", envir = .GlobalEnv) || is.null(encryptkey)) {
@@ -148,7 +148,7 @@ get_encryptkey <- function(keyring = 'icicle') {
 # get_encryptkey()
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 get_configfile <- function(
     srcfile = 'C:/Users/cmshaw/WorkingNotebooks/Config/config_jake.ini',
     trgdir = NULL,
@@ -226,7 +226,7 @@ get_configfile_ <- function(
 get_configfile()
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 get_configproperty <- function(property, section, silent=TRUE)
 {
   if(!silent) {cat('Current directory',getwd(),'\n')}
@@ -245,7 +245,7 @@ get_configproperty <- function(property, section, silent=TRUE)
 # get_configproperty('label','esteylist')
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 
 # esteylist_params<-get_configset(section='esteylist')
 
@@ -300,7 +300,7 @@ get_configset <- function(section = 'esteylist', silent=TRUE)
 # rslt <- get_configset('esteylist')
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 get_configset__depreciated <- function(section = NULL, silent=TRUE)
 {
   # Validate section is provided
@@ -346,7 +346,7 @@ get_configset__depreciated <- function(section = NULL, silent=TRUE)
 # rslt <- get_configset('esteylist')
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # library(DBI)
 # section <- 'mysql'
 # engine <- 'MariaDB'
@@ -406,7 +406,7 @@ db_con <- function(section='esteylist'
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 db_discon <- function(connection=NULL, keep=TRUE, registry='con_pool', silent=TRUE) {
 
   # Ensure connection is not NULL before proceeding
@@ -440,7 +440,7 @@ db_discon <- function(connection=NULL, keep=TRUE, registry='con_pool', silent=TR
 # print('done')
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # rslt <- .con_reg('get_con', section=section, registry=registry, silent=silent)
 .con_reg <- function(action='get_con', con=NULL, section='', engine=NULL, registry='con_pool', silent=TRUE) {
   
@@ -554,7 +554,7 @@ db_discon <- function(connection=NULL, keep=TRUE, registry='con_pool', silent=TR
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # library(ConfigParser) # parse configuration file
 # library(safer)        # encrypts text
 # library(odbc)         # work with SQL Server
@@ -586,7 +586,7 @@ db_discon <- function(connection=NULL, keep=TRUE, registry='con_pool', silent=TR
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # library(ConfigParser) # parse configuration file
 # library(safer)        # encrypts text
 # library(RMariaDB)     # work with mariadb
@@ -628,7 +628,7 @@ db_discon <- function(connection=NULL, keep=TRUE, registry='con_pool', silent=TR
 # con <- db_con('esteylist','MariaDB')
 
 
-## ----progress----------------------------------------------------------------------------------------------------------------------------------
+## ----progress---------------------------------------------------------------------------------------------------------------------------------
 progress_bar_custom <- R6::R6Class(
   "progress_bar_custom",
   inherit = progress::progress_bar,
@@ -644,7 +644,7 @@ progress_bar_custom <- R6::R6Class(
 )
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 get_sql_dictionary<-function(schema=NULL
                            , dbname='HEMEDB'
                            , ddname='sqldd'
@@ -692,24 +692,24 @@ get_sql_dictionary<-function(schema=NULL
 # x<-get_sql_dictionary(global=FALSE, ddname='ddcopy')
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # sql_get_table('non_ablative.aml_mds_tbi200', 'esteylist')
-sql_get_table <- function(schema_tbl=NULL, section='esteylist', engine=NULL, filt=NULL, silent=TRUE) {
+sql_get_table <- function(sch_tbl=NULL, section='esteylist', engine=NULL, filt=NULL, silent=TRUE) {
   # testing
-  # schema_tbl <- 'esteylist_label.patient_list'
+  # sch_tbl <- 'esteylist_label.patient_list'
   # section    <- 'esteylist'
 
-  # require schema_tbl
-  if (is.null(schema_tbl)) {
-    cat('Cannot process sql_get_table() without the schema_tbl parameter')
+  # require sch_tbl
+  if (is.null(sch_tbl)) {
+    cat('Cannot process sql_get_table() without the sch_tbl parameter')
     return(FALSE)
   }
 
   # sort the parameters
-  schema_split <- strsplit(str_replace_all(schema_tbl, "\\[|\\]", ""), "\\.")[[1]]
+  schema_split <- strsplit(str_replace_all(sch_tbl, "\\[|\\]", ""), "\\.")[[1]]
   schema     <- schema_split[1]
   tbl        <- schema_split[2]
-  schema_tbl <- paste(glue("[{schema}].[{tbl}]"))
+  sch_tbl <- paste(glue("[{schema}].[{tbl}]"))
   
   # if no engine use the default
   if (is.null(engine)) {
@@ -773,21 +773,21 @@ sql_get_table <- function(schema_tbl=NULL, section='esteylist', engine=NULL, fil
 # df<-sql_get_table('esteylist','epicpatientdata.epicpatientdata', silent=TRUE)
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
-sql_drop_tbl <- function(schema_tbl, tbl) {
+## ---------------------------------------------------------------------------------------------------------------------------------------------
+sql_drop_tbl <- function(sch_tbl, tbl) {
   con <- db_con()
   
-  if (str_detect(schema_tbl, '\\.')) {
-      split_schema <- strsplit(schema_tbl, "\\.")[[1]]
+  if (str_detect(sch_tbl, '\\.')) {
+      split_schema <- strsplit(sch_tbl, "\\.")[[1]]
       schema       <- split_schema[1]
       tbl          <- split_schema[2] 
   } else {
-    schema <- schema_tbl
+    schema <- sch_tbl
   }
-  schema_tbl <- paste0(glue("[{schema}].[{tbl}]"))
+  sch_tbl <- paste0(glue("[{schema}].[{tbl}]"))
   
   # Construct the SQL command to drop the table if it exists
-  sqlcmd <- glue("DROP TABLE IF EXISTS {schema_tbl} ;")
+  sqlcmd <- glue("DROP TABLE IF EXISTS {sch_tbl} ;")
   
   # Try-catch for transactional integrity
   tryCatch({
@@ -805,7 +805,7 @@ sql_drop_tbl <- function(schema_tbl, tbl) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 sql_copy_tbl <- function(schema, trgtbl, srctbl, data=FALSE) {
 
   # Drop the existing target table
@@ -837,7 +837,36 @@ sql_copy_tbl <- function(schema, trgtbl, srctbl, data=FALSE) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
+sql_desc_tbl <- function(schema, trgtbl, srctbl, data=FALSE) {
+
+  # Construct the SQL command to copy the source table to the target with/without data
+  if (data) {
+    # all data
+    sqlcmd <- glue("SELECT * INTO [{schema}].[{trgtbl}] FROM [{schema}].[{srctbl}];")  
+  } else {
+    # no data
+    sqlcmd <- glue("SELECT * INTO [{schema}].[{trgtbl}] FROM [{schema}].[{srctbl}] WHERE 1=0;")  
+  }
+  
+  # Try-catch for transactional integrity
+  tryCatch({
+    con <- db_con()
+    # Transaction
+    dbExecute(con, "BEGIN TRANSACTION")
+    dbExecute(con, sqlcmd)
+    dbExecute(con, "COMMIT TRANSACTION")
+    message("Table ", trgtbl, " successfully copied from ", srctbl)
+  }, error = function(e) {
+    # Rollback in case of error
+    dbExecute(con, "ROLLBACK TRANSACTION")
+    message("Error encountered during table copy: ", e$message)
+  })
+  db_discon()
+}
+
+
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 sql_store_rc <-function( paramsect=NULL
                        , section=NULL
                        , silent=TRUE) {
@@ -912,8 +941,8 @@ sql_store_rc <-function( paramsect=NULL
 
         # Store number of rows for summary
         summary_df$Rows[ind] <- nrow(df)        
-        schema_tbl <- paste(schema, tbl, sep='.')
-        altered_cols <- sql_insert_df(df, schema_tbl, silent=TRUE)
+        sch_tbl <- paste(schema, tbl, sep='.')
+        altered_cols <- sql_insert_df(df, sch_tbl, silent=TRUE)
     }
     cat('\nLOADED AND SAVED', vers,'TABLES:', toupper(retain), '\n')
 
@@ -931,7 +960,7 @@ sql_store_rc <-function( paramsect=NULL
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Define the custom conversion function
 sql_convert_type <- function(var, reference_var) {
   ref_class <- class(reference_var)
@@ -959,7 +988,7 @@ sql_convert_type <- function(var, reference_var) {
 
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # sql_resize(df, schema, tbl, chcols, limit)
 sql_resize <- function(df, schema, tbl, limit = 250) {
 
@@ -1036,11 +1065,11 @@ sql_resize <- function(df, schema, tbl, limit = 250) {
 
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # sql_insert_df(chunk_df |> select(record, everything()), 'esteylist.redcap_log', overwrite=FALSE)  
-# sql_insert_df(target_df, schema_tbl, overwrite=TRUE)
+# sql_insert_df(target_df, sch_tbl, overwrite=TRUE)
 sql_insert_df <- function(df = NULL,
-                          schema_tbl = NULL,
+                          sch_tbl = NULL,
                           limit = 250,
                           silent = TRUE,
                           test = FALSE,
@@ -1054,7 +1083,7 @@ sql_insert_df <- function(df = NULL,
   if (test) {
     df <- rslt_df
     
-    schema_tbl <- 'esteylist.redcap_log'
+    sch_tbl <- 'esteylist.redcap_log'
     limit <- 250
     silent <- TRUE
     nrow = Inf
@@ -1074,8 +1103,8 @@ sql_insert_df <- function(df = NULL,
     return(NULL)  # No need to proceed further
   }
 
-  split_schema <- unlist(strsplit(schema_tbl, "\\."))
-  if (length(split_schema) != 2) stop("Invalid `schema_tbl` format. Expected 'schema.table'.")
+  split_schema <- unlist(strsplit(sch_tbl, "\\."))
+  if (length(split_schema) != 2) stop("Invalid `sch_tbl` format. Expected 'schema.table'.")
 
   # Local vars
   schema <- split_schema[1]
@@ -1151,11 +1180,11 @@ sql_insert_df <- function(df = NULL,
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # sql_insert_df(chunk_df |> select(record, everything()), 'esteylist.redcap_log', overwrite=FALSE)  
-# sql_insert_df(target_df, schema_tbl, overwrite=TRUE)
+# sql_insert_df(target_df, sch_tbl, overwrite=TRUE)
 sql_insert_df__X <- function(df = NULL,
-                          schema_tbl = NULL,
+                          sch_tbl = NULL,
                           limit = 250,
                           silent = TRUE,
                           test = FALSE,
@@ -1168,7 +1197,7 @@ sql_insert_df__X <- function(df = NULL,
   # Test mode setup for debugging
   if (test) {
     df <- target_df
-    schema_tbl <- 'frozen.allarrival'
+    sch_tbl <- 'frozen.allarrival'
     limit <- 250
     silent <- FALSE
     nrow = Inf
@@ -1188,9 +1217,9 @@ sql_insert_df__X <- function(df = NULL,
     return(NULL)  # No need to proceed further
   }
 
-  split_schema <- unlist(strsplit(schema_tbl, "\\."))
+  split_schema <- unlist(strsplit(sch_tbl, "\\."))
   if (length(split_schema) != 2) {
-    stop("Invalid `schema_tbl` format. Expected 'schema.table'.")  
+    stop("Invalid `sch_tbl` format. Expected 'schema.table'.")  
   }
   
   # Local vars
@@ -1277,7 +1306,7 @@ sql_insert_df__X <- function(df = NULL,
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 sql_run_cmd <- function(con=NULL
                 , section=NULL
                 , cmd=NULL
@@ -1456,7 +1485,7 @@ sql_run_cmd <- function(con=NULL
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # dosql(con=NULL, dbname='HEMEDB', cmd, engine=NULL, silent=TRUE)
 dosql <- function(con=NULL
                 , section=NULL
@@ -1470,7 +1499,7 @@ dosql <- function(con=NULL
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 sql_parse <- function(cmd) {
   clean <- paste(cmd,';\n')
   clean <- gsub(";\\s*\n", ";\n", clean)
@@ -1480,7 +1509,7 @@ sql_parse <- function(cmd) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # get_rc_dictionary('esteylist')
 get_rc_dictionary <- function(params_or_section=NULL
                        , ddname='rcdd'
@@ -1549,7 +1578,7 @@ get_rc_dictionary <- function(params_or_section=NULL
 # get_rc_dictionary('dahlia', reload=FALSE)
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 get_rc_code <- function(fld=NULL, section='esteylist') {
   get_rc_dictionary(section)
   field_dd <- rcdd |>
@@ -1571,7 +1600,7 @@ get_rc_code <- function(fld=NULL, section='esteylist') {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 get_rc_log <- function(token=NULL
                        , url        = "https://redcap.iths.org/api/"
                        , logtype    = 'update'
@@ -1643,7 +1672,7 @@ get_rc_log <- function(token=NULL
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 get_rc_changes <- function(fld_code_df=NULL, log_df=NULL, weeks=1, fld=NULL, section='esteylist') {
 
   if(FALSE){
@@ -1720,7 +1749,7 @@ get_rc_changes <- function(fld_code_df=NULL, log_df=NULL, weeks=1, fld=NULL, sec
 
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # library(dplyr) # likely part of standard libraries
 # Find df widths for df list utilizing REDCap data dictionary and SQL Server INFORMATION SCHEMAS
 # params <- get_configset('esteylist')
@@ -1810,7 +1839,7 @@ get_width <- function( paramsect=NULL
 # maxdf <- get_width(section=section,retain)
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # get_rc_from_list()
 get_rc_tables <- function(paramsect=NULL
                            , label=FALSE
@@ -1903,7 +1932,7 @@ get_rc_tables <- function(paramsect=NULL
 } # end func
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # section<-'diagnosis_for_aml_arrivals'
 # params<-get_configset(section)
 # x <- get_rc_table(params,'trm')
@@ -1988,7 +2017,7 @@ get_rc_table <- function(paramsect=NULL
 # rslt <- get_rc_row_ids('eln2022', label=FALSE, section='esteylist')
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Define the function
 group_rc_chkbox <- function(df) {
   
@@ -2044,7 +2073,7 @@ group_rc_chkbox <- function(df) {
 
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # suppressWarnings(suppressMessages(library(REDCapTidieR)))
 redcap_supertibble <- function(section='esteylist',forms=NULL){
   # this code expects a configuration file in the working directory
@@ -2060,7 +2089,7 @@ redcap_supertibble <- function(section='esteylist',forms=NULL){
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # get_sheet(ctmsfile, encryptkey=encryptkey, startRow=3)
 get_sheet <- function(filepath, encryptkey = get_encryptkey(), startRow = 1, rows=NULL, silent=TRUE, test=FALSE) {
   
@@ -2125,7 +2154,7 @@ get_excel_file <- function(filepath) {get_spreadsheet(filepath)}
 
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # library(fs)  # Make sure to load the fs package for dir_ls
 # latest_file <- get_last_file_name(importdir, pattern = "(?i)all.*", ext='csv')
 
@@ -2148,7 +2177,7 @@ get_last_file_name <- function(path, ext = 'xlsx', pattern = '.*', encryptkey = 
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # get_last_file(path=ctmsdir, startRow=5)
 get_last_file <- function(path, ext='xlsx', hasdate=NULL, pattern='', encryptkey=NULL, startRow = 1) {
   
@@ -2219,7 +2248,7 @@ get_last_file_old <- function(path, ext='xlsx', hasdate=NULL, encryptkey=NULL, s
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Function to read a password-protected excel file and return a df
 # df <- decrypt_excel(filepath, password=encryptkey, startRow = startRow, rows=rows)
 decrypt_excel <- function(filepath, password, sheet=1, silent=TRUE, startRow = 1, rows=NULL) {
@@ -2254,7 +2283,7 @@ decrypt_excel <- function(filepath, password, sheet=1, silent=TRUE, startRow = 1
 # df <- decrypt_excel(filepath, sheet=1, password=encryptkey, silent=TRUE)
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Create sheet xlsx or csv
 make_sheet <- function(df,
                       path      = "C:/Users/cmshaw/Desktop/",
@@ -2314,7 +2343,7 @@ make_sheet <- function(df,
 # make_sheet(test=TRUE)
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 write_to_file <- function(dfs, output_names = NULL, 
                           directory = getwd(), date_format = "", 
                           output_type = "xlsx", output_file = NULL) {
@@ -2409,7 +2438,7 @@ write_to_csv <- function(dfs, output_names, directory) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # library(knitr)
 # library(kableExtra)
 display_kable <- function(rslt=data.frame()
@@ -2434,7 +2463,7 @@ display_kable <- function(rslt=data.frame()
 # display_kable(summary_df,'TEST HEADING')
 
 
-## ----eval=FALSE, include=FALSE-----------------------------------------------------------------------------------------------------------------
+## ----eval=FALSE, include=FALSE----------------------------------------------------------------------------------------------------------------
 # # call the send.mail() function of mailR
 # send.mail(
 #   from         = "cmshaw@fredhutch.org",
@@ -2453,7 +2482,7 @@ display_kable <- function(rslt=data.frame()
 #   debug        = FALSE)
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Combine rows based on specific conditions in the "treatment" column
 
 
@@ -2518,7 +2547,7 @@ treatment_mapping <- function(df_name) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 ## response_mapping
 response_mapping <- function(df_name)
 { get(df_name) |>
@@ -2553,7 +2582,7 @@ response_mapping <- function(df_name)
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 ## treatmentlocation_mapping
 # modify the location of treatment utilizing information in response and treatment status.
 # treatmentlocation_mapping <- function(df)
@@ -2581,7 +2610,7 @@ response_mapping <- function(df_name)
 
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 responsedate_calculated <- function(df)
 {
   df <- df |>
@@ -2593,7 +2622,7 @@ responsedate_calculated <- function(df)
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 ## arrivaltype_mapping
 arrivaltype_mapping <- function(df)
 { df |>
@@ -2628,7 +2657,7 @@ arrivaltype_mapping <- function(df)
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 calculate_trm <- function(df) {
   
   # Check if dataframe has at least 9 columns
@@ -2668,7 +2697,7 @@ calculate_trm <- function(df) {
 # newdf<-calculate_trm(df)
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # remove objects from environment
 rmv <- function(type = 'chr', envir = .GlobalEnv)
 { obj_names <- ls(all = TRUE, envir = envir)
@@ -2684,7 +2713,7 @@ rmv <- function(type = 'chr', envir = .GlobalEnv)
 
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # library(progress)
 # library(glue)
 
@@ -2723,7 +2752,7 @@ get_progress_bar_old <- function(n=100,msg="Downloading") {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 compare_df_columns <- function(df1, df2) {
   # Get column names and types
   cols_df1 <- tibble(Column = names(df1), Type = sapply(df1, class))
@@ -2774,7 +2803,7 @@ compare_df_columns <- function(df1, df2) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 get_prev_tues <- function(date) {
   # Calculate the difference from Tuesday (1 = Sunday, 7 = Saturday, 3 = Tuesday)
   weekday <- wday(date)
@@ -2784,7 +2813,7 @@ get_prev_tues <- function(date) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 library(ggplot2)
 library(tidyr)
 library(dplyr)
@@ -2818,7 +2847,7 @@ create_heat_map <- function(df, true_color = "red", false_color = "green", missi
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 freq <- function(vec, title=NULL) {
   # title <- if (is.null(title)) deparse(substitute(vec))
   if (is.null(title)) {
@@ -2842,7 +2871,7 @@ freq <- function(vec, title=NULL) {
 
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 neatfreq <- function(vec, title=NULL) {
   if (is.null(title)) {
     title <- deparse(substitute(vec))
@@ -2872,7 +2901,7 @@ neatfreq <- function(vec, title=NULL) {
 
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Returns directory files matching a regex pattern
 file_regex <- function(path, pattern) {
   # List all files in the directory
@@ -2891,7 +2920,7 @@ file_regex <- function(path, pattern) {
 # print(matching_files)
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 close_dfs <- function() {
   # Get all objects in the global environment
   glob_objs <- ls(envir = .GlobalEnv)
@@ -2908,7 +2937,7 @@ close_dfs <- function() {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 keep_objs <- function(type = 'func', keep=NULL) { 
 
   # Get a list of all objects in the global environment
@@ -2961,7 +2990,7 @@ keep_objs <- function(type = 'func', keep=NULL) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 addrow <- function(df_name = 'todo', dir = '', file = '', action = '') {
   # If no parameters are passed, create an empty table
   if (dir == '' && file == '' && action == '') {
@@ -3036,7 +3065,7 @@ addrow_ <- function(df_name = 'df', dir = '', file = '', action = '') {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 addtodf <- function(df_name, ...) {
   # Convert df_name to character
   df_name <- deparse(substitute(df_name))
@@ -3092,7 +3121,7 @@ addtodf <- function(df_name, ...) {
 
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 
 # Define a function to convert applicable character columns to Date
 convert_date_cols <- function(df) {
@@ -3202,7 +3231,7 @@ convert_date_cols_0 <- function(df) {
 
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 skewdates <- function(df = NULL, skewvalue = 100, rand = TRUE) {
   
   # Check if the dataframe is NULL
@@ -3246,7 +3275,7 @@ skewdates <- function(df = NULL, skewvalue = 100, rand = TRUE) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 get_abbr <- function(text) {
   result = text
   
@@ -3274,7 +3303,7 @@ get_abbr <- function(text) {
 
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 in_range <- function(x, range_str) {
   # Trim whitespace and validate input
   range_str <- gsub("\\s", "", range_str)
@@ -3327,7 +3356,7 @@ in_range <- function(x, range_str) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 extract_components <- function(str, delim = "\\.") {
   # Regex pattern: Finds the first substring containing the delimiter
   pattern <- paste0("\\S*", delim, "\\S+")
@@ -3342,7 +3371,7 @@ extract_components <- function(str, delim = "\\.") {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 parse_path_components <- function(str, delim = "\\.") {
   # Step 1: Extract components using extract_components
   comps <- extract_components(str, delim)
@@ -3360,7 +3389,7 @@ parse_path_components <- function(str, delim = "\\.") {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 
 # Function to check for function references in files
 check_function_references <- function(codedir, functions_to_check, file_extensions = c("R", "Rmd")) {
@@ -3383,7 +3412,7 @@ check_function_references <- function(codedir, functions_to_check, file_extensio
 }
 
 
-## ----eval=FALSE, include=FALSE-----------------------------------------------------------------------------------------------------------------
+## ----eval=FALSE, include=FALSE----------------------------------------------------------------------------------------------------------------
 # print(interactive())
 # if (interactive()) {
 #   # Set your root directory
@@ -3400,7 +3429,7 @@ check_function_references <- function(codedir, functions_to_check, file_extensio
 # }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Function to list all non-hidden files recursively from a given directory
 list_files_recursively <- function(dir_path) {
   # List all files and directories recursively
@@ -3413,7 +3442,7 @@ list_files_recursively <- function(dir_path) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Function to search for function references in a file
 search_in_file <- function(file_path, functions) {
   # Suppress warnings related to incomplete final lines
@@ -3431,7 +3460,7 @@ search_in_file <- function(file_path, functions) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Custom function to process a file
 process_file <- function(file, functions_to_check) {
   file_name    <- basename(file)
@@ -3463,7 +3492,7 @@ process_file <- function(file, functions_to_check) {
 }
 
 
-## ----eval=FALSE, include=FALSE-----------------------------------------------------------------------------------------------------------------
+## ----eval=FALSE, include=FALSE----------------------------------------------------------------------------------------------------------------
 # extract_info <- function(row, target_colnames, target_value) {
 #   colresults <- sapply(target_colnames, function(colname) {
 #     if (!colname %in% names(row)) {
@@ -3623,7 +3652,7 @@ process_file <- function(file, functions_to_check) {
 # 
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # dosql(con=NULL, dbname='HEMEDB', cmd, engine=NULL, silent=TRUE)
 dosql__ <- function(con=NULL
                 , section=NULL
@@ -3789,7 +3818,7 @@ dosql__ <- function(con=NULL
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 sql_parse <- function(cmd) {
   clean <- paste(cmd,';\n')
   clean <- gsub(";\\s*\n", ";\n", clean)
@@ -3799,7 +3828,7 @@ sql_parse <- function(cmd) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # library(glue)  # If using glue for string interpolation, ensure it's loaded too
 # library(stringr)
 
@@ -4053,7 +4082,7 @@ get_arrivals <- function(tblcnt=11, silent=TRUE) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Modify SQL Server columns that are too narrow
 # section<-'esteylist'
 # params<-get_configset(section)
@@ -4140,7 +4169,7 @@ sql_fit_columns <- function( paramsect=NULL
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 .sql_drop_tables <- function( paramsect=NULL
                        , label=FALSE
                        , silent=TRUE)
@@ -4184,7 +4213,7 @@ sql_fit_columns <- function( paramsect=NULL
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 .sql_create_structure <- function(paramsect=NULL
                        , label=FALSE
                        , silent=TRUE) { 
@@ -4230,7 +4259,7 @@ sql_fit_columns <- function( paramsect=NULL
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 sql_append_df <- function( paramsect=NULL
                        , label=FALSE
                        , silent=TRUE) {
@@ -4295,7 +4324,7 @@ sql_append_df <- function( paramsect=NULL
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 # Helper function to test inserting a single column
 # test=TRUE
 test_column_insert <- function(df, nrow = 10, silent = TRUE, test = FALSE) {
@@ -4309,7 +4338,7 @@ test_column_insert <- function(df, nrow = 10, silent = TRUE, test = FALSE) {
   # Define table and schema
   # schema <- 'scratch'
   # tbl    <- 'test_insert_columns'
-  # schema_tbl <- paste0(schema,'.',tbl)
+  # sch_tbl <- paste0(schema,'.',tbl)
   table_id   <- Id(schema='scratch', table='test_insert_columns')
   
   # Skip test if nrow < 1
@@ -4402,9 +4431,9 @@ test_column_insert <- function(df, nrow = 10, silent = TRUE, test = FALSE) {
 }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 sql_insert_df_depreciated <- function(df = NULL,
-                          schema_tbl = NULL,
+                          sch_tbl = NULL,
                           limit = 225,
                           silent = TRUE,
                           test = FALSE,
@@ -4418,7 +4447,7 @@ sql_insert_df_depreciated <- function(df = NULL,
   # 
   if (test) {
     df<-widedf
-    schema_tbl<-'transplant.transplantwide'
+    sch_tbl<-'transplant.transplantwide'
     limit<-25
     silent<-TRUE   
     date_suffix <- '%Y%m'
@@ -4430,7 +4459,7 @@ sql_insert_df_depreciated <- function(df = NULL,
   if (!is.null(date_suffix)) {
     # Ensure the date_suffix is properly formatted
     date_suffix <- format(Sys.Date(), date_suffix)
-    schema_tbl <- paste0(schema_tbl, "_", date_suffix)
+    sch_tbl <- paste0(sch_tbl, "_", date_suffix)
   }
   
   # 
@@ -4442,7 +4471,7 @@ sql_insert_df_depreciated <- function(df = NULL,
   chcols       <- names(df)[sapply(df, is.character)]
   df           <- df |> mutate(across(all_of(dtcols), ~ format(., "%Y-%m-%d")))
   df           <- df |> mutate(across(all_of(dtcols), ~ replace(., is.na(.), "")))
-  split_schema <- strsplit(schema_tbl, "\\.")[[1]]
+  split_schema <- strsplit(sch_tbl, "\\.")[[1]]
   schema       <- split_schema[1]
   tbl          <- split_schema[2]  
     
@@ -4464,7 +4493,7 @@ sql_insert_df_depreciated <- function(df = NULL,
   for (col in chcols) {
     max_length <- max(nchar(df[[col]]), na.rm = TRUE)
     if (max_length > limit) {
-      cmd <- glue("ALTER TABLE {schema_tbl} ALTER COLUMN [{col}] text")
+      cmd <- glue("ALTER TABLE {sch_tbl} ALTER COLUMN [{col}] text")
       if (!silent) {cat(cmd,'\n')}
       dbExecute(con, cmd)
     }
@@ -4503,7 +4532,7 @@ sql_insert_df_depreciated <- function(df = NULL,
 }
 
 
-## ----eval=FALSE, include=FALSE-----------------------------------------------------------------------------------------------------------------
+## ----eval=FALSE, include=FALSE----------------------------------------------------------------------------------------------------------------
 # library(reticulate)
 # library("sqlparseR")
 # 
@@ -4514,7 +4543,7 @@ sql_insert_df_depreciated <- function(df = NULL,
 # }
 
 
-## ----------------------------------------------------------------------------------------------------------------------------------------------
+## ---------------------------------------------------------------------------------------------------------------------------------------------
 library(DBI)
 library(dplyr)
 
