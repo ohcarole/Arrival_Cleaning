@@ -1,0 +1,505 @@
+---
+title: "Arrival_Cleaning"
+author: "Carole Shaw"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## Purpose
+
+This script is designed to put arrival data together and to distinguish data collected for treatment prior to FHCC arrival, arrivals associated with FHCC care, and arrivals that are not associated with a currative treatment at FHCC (i.e. comfort care/consult) . The plan is to add resulting data from this routine to SQL Server updating it with the weekly workflow so that the data will be consistently compiled and updated over time.\
+\
+The data created here are joined with other source data, such as transplant data, epic report data, and eventually with CORTEX downloads during the creation of the frozen data.
+
+## Background:
+
+Currently patient treatment plans each generate a new arrival. Usually those are entered in sequential order, and for those that have had their first treatment here the arrival 1 form contains their first treatment here for AML, either frank disease or \>10% blasts. On those records the arrival table is arrival1, the arrivalnum is also 1, and the treatment location is FHCC.
+
+Some patients first were treated at an outside location. There are a few ways that an outside treatment may have been entered into our system. 1) Induction may have been entered into the Diagnosis REDCap, which is now defunct, but induction associated was imported into the 'induction' form of the Estey List REDCap project. 2) An arrival may have been entered as arrivalnum "-1" to indicate an arrival that occurred prior to arrival at FHCC, or 3) an arrival may be entered with location of treatment "OUT" to indicate treatment from an outside location, often (but not always), indicating treatment prior to arrival at FHCC.
+
+We formerly did not enter outside treatment into arrival forms, when that was the case location was implied to be FHCC. The default for location is therefore FHCC when no location is given.
+
+There are some cases where an outside arrival is dated *after* the first FHCC arrival. When that is not associated with hospice/palliative/no treatment those cases should be set aside for review.
+
+If corrections are made to data in REDCap, the REDCap data need to be imported anew for corrections to be reflected here.
+
+## Plan
+
+So the logic in this program is:
+
+1)  Identify any treatment imported from the defunct Diagnosis REDCap into the induction table (**done**)
+2)  Separate arrivals outside treatments into allprior table (**done**)
+3)  Separate arrivals represent a treatment at FHCC or without a treatment location into allarrival table (**done**)
+4)  Merge arrivals identified from the induction table with those from the allprior, remove duplicates (**done**)
+5)  From the allarrival table, find the earliest arrival for each patient into a table first_fhcc_arrival (**done**)
+6)  Compare allprior arrivals to the first_fhcc_arrival for each patient to find those that need to be set aside for review, ignoring any where the treatment was No Treatment, Hospice or Palliative. (**done**)
+7)  If data cleaning to the REDCap instance occurred at step 6, update REDCap data on SQL server and then re-run steps 1-6, otherwise go on to step 8. (**done**)
+8)  Put together the allarrival table with those remaining in the allprior table. (**done**)
+9)  Assign sequence to patient arrivals ordering by arrivaldate, treatmentdate. Using treatment date because many of the outside treatments don't have a concept of arrival. (**done**)
+10) Copy the allarrival data to SQL Server. (**done**)
+11) Add this script to the weekly workflow, just after import of REDCap data. (**done**)
+12) Run the script: Coding and Data Acquisition/R Scripts/Frozen to SQLServer/**Frozen_Data_to_SQLServer.Rmd** to update the frozen data. The script exists, and has been retooled to expect an allarrival table on SQL Server at frozen.allarrival. (**done**)
+
+# SETUP
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, fig.show = 'asis')
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+```
+
+#### Load Libraries and Icicle Functions
+
+Most libraries are loaded with icicles. Recompile the icicle functions every time to incorporate changes.
+
+```{r library}
+codedir <<- gsub("\\\\", "/", Sys.getenv('FROZEN_PATH', unset = NA))
+source(paste0(codedir,'/icicle_setup.R')); icicle_setup()
+```
+
+## Helper Functions
+
+#### convert_var(var_name, reference_var_name, data)
+
+Converts a variable to the type of another reference variable and returns a variable with the same values as `var`, but converted to the type of `reference_var`. Conversion uses standard R functions like `as.Date()`, `as.POSIXct()`, `factor()`, and others. The function handles a variety of common R types, such as `Date`, `POSIXct`, `factor`, `numeric`, `character`, `logical`, and others.
+
+-   **Date** and **POSIXct** types with **as.Date()** and **as.POSIXct()** conversions.
+-   **Factor** columns with matching levels to preserve factor levels.
+-   **Logical**, **integer**, **numeric**, and **character** types using **as.logical()**, **as.integer()**, **as.numeric()**, and **as.character()**.
+-   For other types, it defaults to using **as()** to match the reference type.
+
+**Arguments**
+
+-   `var`: A variable (or column) whose type needs to be converted. This can be any type that is compatible with R’s basic types.
+-   `reference_var`: A reference variable from which the target type will be determined. This is typically a column from another data frame defining target type.
+-   `data` is the data frame containing the columns.
+
+```{r}
+# Define the custom conversion function
+convert_var <- function(var, reference_var) {
+  ref_class <- class(reference_var)
+  
+  if ("Date" %in% ref_class) {
+    return(as.Date(var))  # Convert to Date if reference is Date
+  } else if ("POSIXct" %in% ref_class) {
+    return(as.POSIXct(var))  # Convert to POSIXct if reference is POSIXct
+  } else if ("factor" %in% ref_class) {
+    return(factor(var, levels = levels(reference_var)))  # Convert to factor with matching levels
+  } else if ("logical" %in% ref_class) {
+    return(as.logical(var))
+  } else if ("integer" %in% ref_class) {
+    return(as.integer(var))
+  } else if ("numeric" %in% ref_class) {
+    return(as.numeric(var))
+  } else if ("character" %in% ref_class) {
+    return(as.character(var))
+  } else {
+    # Handle unsupported types or fallback to standard conversion
+    ref_type <- typeof(reference_var)
+    return(as(var, ref_type))  # Fallback conversion based on reference's type
+  }
+}
+```
+
+## Load Some Data from SQL Server
+
+```{r}
+# columns of interest
+patient_list_cols <- c("recordid",         "ptmrn",        "ptlastname", "ptbirthdate", "dxdate",    
+                       "dxmorphdate",      "dxmorphsrc",   "dxmorph",    "dxmorphnum",  "dxmorphcell",
+                       "dxflowdate",       "dxflowsrc",    "dxflow",     "dxflownum",
+                       "uploaded_to_ctms", "uploaded_to_ctms_date",      "firstarrival", "lastarrival",
+                       "firstinduction",   "patient_list_rectime",       "primary_subject_id")
+
+specialty_note_cols <- c("recordid", "ptmrn", "ptlastname",     
+                         "ptdeathdate", "ptlastchecked",
+                         "lastknownalive", "lastknownremission", "lastknownactivedisease",   
+                         "specialty_note_rectime")
+
+# tables of interest
+patient_list <- sql_get_table('esteylist_label.patient_list') |> 
+    filter(ptlastname != 'PATIENT') |>
+    mutate(recordid = as.character(recordid)) |> 
+    select(any_of(patient_list_cols))
+
+specialty_note <- sql_get_table('esteylist_label.specialty_note') |> 
+    filter(ptlastname != 'PATIENT') |>
+    mutate(recordid = as.character(recordid)) |>
+    select(any_of(specialty_note_cols))
+
+# Make sure the REDCap data dictionary is loaded for the current section's schema
+get_rc_dictionary('esteylist')
+```
+
+## Pre-Arrivals from the Induction Table
+
+```{r}
+# previous to first arrival induction information
+induction_cols <- c("recordid",
+    "ptmrn",
+    "ptlastname",
+    "arrivaltable",
+    "arrival",
+    "rxline",
+    "treatmentlocation",
+    "treatmentdate",
+    "treatment",
+    "responsedate",
+    "response",
+    "mrd",
+    "relapsedate",
+    "relapsedesc")
+
+induction <- sql_get_table(glue('esteylist_label.induction')) |> 
+  # Apply the custom date conversion function across character columns
+  convert_date_cols() |>
+  # Apply the custom grouping of REDCap checkbox fields into a single column
+  group_rc_chkbox() |>
+  mutate(recordid         = as.character(recordid)
+      , arrivaltable      = "induction"
+      , orig_arrivaltable = "induction"
+      , arrival           = as.integer(-1)
+      , rxline            = 'Ind'
+      # , arrivaldate       = dxdate1
+      , treatmentlocation = 'OUT'
+      , treatmentdate     = dxtreatmentdate1
+      , treatment         = dxtreatment1
+      , responsedate      = dxresponsedate1
+      , response          = dxresponse1
+      , mrd               = dxmrd1
+      , relapsedate       = inductionrelapsedate
+      , relapse           = inductionrelapsenote
+      , treatmentdate     = as.Date(treatmentdate)
+    ) |> 
+  select(any_of(induction_cols)) |> 
+  left_join(patient_list,   by = join_by(recordid, ptmrn, ptlastname)) |>
+  left_join(specialty_note, by = join_by(recordid, ptmrn, ptlastname)) |>
+  filter(!is.na(treatmentdate)) |>
+  arrange(ptmrn, treatmentdate) |>
+  select(recordid, ptmrn, ptlastname, treatmentdate, arrivaltable, arrival, everything())
+```
+
+## Arrivals from the tables Arrival1 - Arrival11
+
+```{r}
+allprior   = NULL
+allarrival = NULL
+allnotreat = NULL
+  
+tblcnt = 11
+
+pb <- get_progress_bar(tblcnt, "PROCESS ARRIVALS")
+
+for (n in 1:tblcnt) {
+  # table for this loop
+  tbl <- paste0('arrival',  n)
+  
+  # Apply the function to the arrival dataframe
+  arrival <- sql_get_table(glue('esteylist_label.arrival{n}')) |>
+    # remove test patients
+    filter(ptlastname != 'PATIENT') |>
+    mutate(
+      # Convert recordid to character type
+        recordid = as.character(recordid)
+      # Add a row number
+      , row_number = row_number(), .before = 1    
+      # Add a tablename column
+      , arrivaltable = tbl
+      , orig_arrivaltable = tbl
+      
+    ) |>
+    # Apply the custom date conversion function across character columns
+    convert_date_cols() |>
+    # Apply the custom grouping of REDCap checkbox fields into a single column
+    group_rc_chkbox() |>
+    # Apply multiple renames in one `rename_with`
+    rename_with(~ {
+      col_name <- .
+      # Rename "a{n}" fields to "a_"
+      col_name <- gsub(glue("^a{n}"), "a_", col_name)
+      # Rename "arrival{n}note" fields specifically to "arrival_note"
+      col_name <- gsub(glue("^arrival{n}note$"), "arrival_note", col_name)
+      # Rename "arrival{n}" fields to "arrival"
+      col_name <- gsub(glue("^arrival{n}"), "arrival", col_name)
+      # Remove trailing "{n}" from other fields
+      col_name <- gsub(glue("{n}$"), "", col_name)
+      # Return the transformed column name
+      col_name
+    }) |>
+    mutate(# using regular expressions to flag those that didn't get curative treatment
+           , currativerx   = !grepl("(?i)spice|pall?i|comfort|consult|outside|support|opinion|surv|2nd\\s|none|not\\selig|not?\\streat", tolower(treatment))) |>
+    select(row_number, recordid, ptmrn, ptlastname, arrivaldate, arrival_rectime, arrivaltable
+           , treatment, currativerx, everything())
+
+  arrival <- arrival |>
+    left_join(patient_list, by = join_by(recordid, ptmrn, ptlastname)) |> 
+    left_join(specialty_note, by = join_by(recordid, ptmrn, ptlastname)) |>
+    select(row_number, recordid, ptmrn, ptlastname, primary_subject_id, everything())
+  
+  if (n > 1) {
+    # Ensure previous column types match
+    arrival <- arrival |>
+      mutate(across(
+        .cols = intersect(names(arrival), names(allarrival)), # Only columns in both dataframes
+        .fns = ~ convert_var(.x, allarrival[[cur_column()]])  # Pass `.x` and reference column to `convert_var`
+      ))
+  }
+  
+  # identify rows not associated with a treatment
+  # notreat <- arrival |> filter(str_detect(treatment, '(?i)pice|pall|consult|opinion|surv|2nd\\s|(no)+t?\\streat'))
+  notreat <- arrival |> filter(!currativerx)
+
+  # keep only rows where there was treatment
+  arrival  <- arrival |> filter(currativerx)
+
+  # combine, and make sure to remove dups
+  prior <- bind_rows(lapply(ls(pattern = "^prior_"), get)) # prior <- bind_rows(prior, prior1, prior2, prior3) |> distinct()
+  prior <- distinct(prior)  
+  
+  # remove prior treatments from the arrival data
+  prior_1 <- arrival |> filter(rxline                == 'Treatment prior to AML induction')
+  prior_2 <- arrival |> filter(a_c1treatmentlocation == 'OUT' & a_treatmentlocation   == '')
+  prior_3 <- arrival |> filter(a_treatmentlocation   == 'OUT')
+  
+  # combine, and make sure to remove dups
+  prior <- bind_rows(lapply(ls(pattern = "^prior_"), get)) # prior <- bind_rows(prior, prior1, prior2, prior3) |> distinct()
+  prior <- distinct(prior)
+
+
+  # Remove prior treatment data from the arrival data
+  arrival <- anti_join(arrival, prior, by=join_by(row_number))
+
+  
+  # set empty structures if needed, usually in just the first loop, these empty structures should be the same
+  if (is.null(allprior) & is.null(allarrival)) {
+    # empty prior structure
+    allprior   <- as.data.frame(prior)[0,]
+    # empty arrival structure
+    allarrival <- as.data.frame(arrival)[0,]
+    # empty structure for no treatment
+    allnotreat <- as.data.frame(notreat)
+  }
+  
+  
+  # Join arrivals
+  allarrival <- bind_rows(allarrival, arrival) |> mutate(row_number = row_number())
+  
+  # Join priors
+  allprior   <- bind_rows(allprior, prior)  |> mutate(row_number = row_number() + nrow(allarrival))
+
+  # Join no treatment
+  allnotreat <- bind_rows(allnotreat, notreat)  |> mutate(row_number = row_number() + nrow(allarrival) + + nrow(allprior))
+  
+  # clear out tables from last loop
+  rm(list = ls(pattern = "^prior"))
+  rm(list = ls(pattern = "^arrival"))
+  
+  pb$tick()
+}
+
+rm(pb)
+freq(allnotreat$treatment)
+
+```
+
+## Merge Induction arrivals with Prior Arrival 1-11
+
+Merge induction data originally from the induction table (originally from Diagnosis REDCap) with allprior arrivals found in arrivals 1-11.
+
+```{r}
+# Wonder if we should bind these earlier on
+allprior$arrivaltable = 'prearrival'
+allprior <- bind_rows(allprior, induction) |> 
+  arrange(recordid, arrivaldate, treatmentdate, arrivalnum) |>
+  # Add a unique arrival identifier as row number
+  mutate(row_number = row_number(), .before = 1)
+```
+
+## Identify first arrival at FHCC
+
+```{r}
+# identify the earliest arrival in the 'allarrival' df
+first_fhcc_arrival <- allarrival |>
+  mutate(min_date = pmin(arrivaldate, treatmentdate, na.rm = TRUE)) |>
+  select(recordid, min_date) |>
+  filter(!is.na(min_date)) |>
+  group_by(recordid) |>
+  summarise(firstarrivaldate = min(min_date)  # Get min_date for each group
+    , .groups = 'drop')
+
+last_fhcc_arrival <- allarrival |>
+  mutate(max_date = pmax(arrivaldate, treatmentdate, na.rm = TRUE)) |>
+  select(recordid, max_date) |>
+  filter(!is.na(max_date)) |>
+  group_by(recordid) |>
+  summarise(lastarrivaldate = max(max_date)         # Get max_date for each group            
+    , .groups = 'drop')
+
+allarrival <- left_join(allarrival, first_fhcc_arrival) |> left_join(last_fhcc_arrival)
+allprior   <- left_join(allprior,   first_fhcc_arrival) |> left_join(last_fhcc_arrival)
+```
+
+## ERROR CHECK
+
+### OUTSIDE treatments dated *before* the first arrival recorded at FHCC
+
+Answers the question: Are there arrivals dated after first FHCC arrival/treatment that we have indicated as "OUT" for location?
+
+Then produces an excel document in the scrap directory with records that seem fishy.
+
+```{r}
+# Are there prior arrivals dated after first FHCC arrival/treatment
+
+# Have staff review any of these where arrival date is after first FHCC arrival, but Rx date is not
+late_outside_arrival <- allprior |>
+  mutate(  priorarrivaldate    = arrivaldate
+         , priortreatmentdate  = treatmentdate
+         , afterfirstarrival   = priorarrivaldate   > firstarrivaldate
+         , afterfirsttreatment = priortreatmentdate > firstarrivaldate
+         , reviewreason = paste('Arrival date',arrivaldate
+                                ,'is after first arrival on',firstarrivaldate)) |>  
+  filter(  afterfirstarrival & !afterfirsttreatment) |>
+  select(  recordid, ptmrn, ptlastname
+         , priorarrivaldate, priortreatmentdate, firstarrivaldate)
+ 
+# Have staff review any of these where treatment date is after first FHCC arrival, but Rx arrival date is not
+late_outside_treatment <- allprior |>
+  mutate(  priorarrivaldate    = arrivaldate
+         , priortreatmentdate  = treatmentdate
+         , afterfirstarrival   = priorarrivaldate   > firstarrivaldate
+         , afterfirsttreatment = priortreatmentdate > firstarrivaldate 
+         , reviewreason = paste('Outside arrival on',priorarrivaldate,
+                                'is before first arrival on',firstarrivaldate,
+                                'but associated rx on',priortreatmentdate,'is not.')) |>
+  filter(  afterfirsttreatment  & !afterfirstarrival) |>
+  select(  recordid, ptmrn, ptlastname, reviewreason
+         , priorarrivaldate, priortreatmentdate, firstarrivaldate)
+
+# Discrepancy report
+outside_rx_discreps <- bind_rows(late_outside_arrival, late_outside_treatment)
+rm(list = ls(pattern = "^late_outside_"))
+
+if (nrow(outside_rx_discreps) > 0){
+  # Create excel for data cleaning
+  make_sheet(outside_rx_discreps, scrapdir, 'errordata', 'outside_after_FHCC_arrival', 'xlsx', overwrite=TRUE )
+  # Add to table of things to correct
+  addrow('todo_df', scrapdir, 'outside_after_FHCC_arrival.xlsx', 'Review for arrival date, treatment date or treatment location errors.')
+}
+```
+
+## Merge prior arrivals with FHCC arrivals
+
+These records represent all treatment attempts we know about for each patient. Some of these are for treatment that happened outside of our institution, those have an arrivaltable of "prearrival"
+
+```{r}
+# Merge together all arrival from FHCC and all prior to arrival at FHCC
+allarrival <- bind_rows(allarrival, allprior)  |> 
+  arrange(recordid, arrivaldate, treatmentdate, arrivalnum, arrivaltable ) |>
+  mutate(row_number = row_number())
+```
+
+## Rank Patient Arrivals with prev/next
+
+Order the treatment attempts within patient by the chronological order in which they occurred, and chain them to a previous or next arrival for a treatment attempt where possible. The prev & next variables can be handy when comparing between any treatment attempt and what may have happened before or after, particularly nice for calculation of days between events.
+
+```{r}
+# Adding prev/next arrival information}
+# Ranking arrivals
+allarrival <- allarrival |>
+  mutate(arrival_old = arrival) |>
+  arrange(recordid, ptmrn, pmax(arrivaldate, treatmentdate, na.rm = TRUE)) |>
+    group_by(recordid) |>
+      mutate(
+        prevarrivaldate   = lag(arrivaldate),
+        prevarrivaltype   = lag(arrivaltype),
+        prevarrivalreason = lag(arrivalreason),
+        prevarrivalmorph  = lag(arrivalmorph),
+        prevarrivalflow   = lead(arrivalflow),
+        
+        nextarrivaldate   = lead(arrivaldate),
+        nextarrivaltype   = lead(arrivaltype),
+        nextarrivalreason = lead(arrivalreason),
+        nextarrivalmorph  = lead(arrivalmorph),
+        nextarrivalflow   = lead(arrivalflow),
+        
+        # Adding ranking
+        arrival = row_number(),
+        
+        # Count all treatment plans
+        allarrivalcnt = n(),
+
+        # Count FHCC arrivals
+        fhccarrivalcnt = sum(grepl("^arr", arrivaltable))
+        
+        
+      ) |>
+    ungroup() |>
+    select(recordid, ptmrn, arrival, everything())
+```
+
+## Report Missing Arrival Sequence number or Arrival Date
+
+Very hard to get arrivals in order without this information, luckily not very many are missing these. When patients are entered into REDCap they are assigned a sequence number on the top of each arrival form. This is useful in the interface if we need to change the order in which arrivals occur. This becomes especially handy if a treatment attempt was missed during abstraction and needs to be inserted. \
+\
+The consequence is that sometimes we forget to adjust all of the sequence numbers associated with the various arrivals for the patient. When this is the case this code checks for any discrepancies and creates a report. \
+\
+It also checks for arrival date, missing arrival dates also make it difficult to tell in what order events took place.
+
+```{r}
+# identify errors
+missing_arrival_order_info <- allarrival |> 
+  # bind_rows(allnotreat) |>
+  left_join(patient_list |> select(recordid, patient_list_rectime))  |> 
+  arrange(recordid, arrivaldate, treatmentdate, arrivalnum, arrivaltable ) |>
+  filter(is.na(arrivaldate) | arrivalnum == "") |>
+  filter(recordid > 1000 & arrivaltable != 'induction') |>
+  arrange( ptlastname, ptmrn, arrivalnum ) |>
+  select(  recordid, ptmrn, ptlastname
+         , arrivalnum, arrivaltable, orig_arrivaltable, arrivaldate, arrival_rectime, arrivalnote
+         , treatmentdate, treatmentnote, patient_list_rectime )
+
+if (nrow(missing_arrival_order_info) > 0){
+  # Create excel for data cleaning
+  make_sheet(missing_arrival_order_info, scrapdir, 'nodate_or_nonumber', 'missing_arrival_order_info', 'xlsx', overwrite=TRUE )
+  # Add to table of things to correct
+  addrow('todo_df', scrapdir, 'missing_arrival_order_info.xlsx', 'Review for arrival date missing and arrival number order')
+}
+```
+
+## MAP KEY VARIABLES, SAVE TO SQLSERVER, PATIENTS W/O ARRIVALS
+
+In addition to moving data to SQL Server, we do a quick check to identify orphaned patients and add them into the arrival for treatment data frame. These are patients who are 'orphaned' in our system, they have been added to REDCap, but have not yet had arrival information entered.
+
+```{r}
+# allarrival <- treatment_mapping('allarrival')
+# allarrival <- response_mapping('allarrival')
+
+allpats    <- bind_rows(allarrival, allnotreat)
+patids     <- patient_list |> select(recordid, ptmrn, ptlastname) |> distinct()
+
+# 'orphaned' in our system, added to REDCap but not fully abstracted
+orphan_pats <- anti_join(patids, allpats) |> mutate(arrivaldate=NA_Date_, arrivaltable='prearrivalentry')
+
+rm(allpats)
+rm(patids)
+
+allarrival <- bind_rows(allarrival, orphan_pats) |>
+  mutate(arrivalyyyymm = format(arrivaldate, '%Y%m'))
+
+# arrivals with treatment attempts, or at least no evidence to the contrary
+sql_insert_df(allarrival, 'frozen.allarrival', nrow=0) 
+sql_insert_df(allarrival, 'frozen.allarrival', date_suffix='%Y%m', nrow=0) 
+# arrivals without a currative treatment attempt, i.e. consult, hospice, went elsewhere
+sql_insert_df(allnotreat, 'frozen.allnotreat', nrow=0) 
+sql_insert_df(allnotreat, 'frozen.allnotreat', date_suffix='%Y%m', nrow=0) 
+
+# a little report of who hasn't yet been abstracted
+make_sheet(orphan_pats, scrapdir, 'Orphans', 'orphan_redcap', 'csv', date=TRUE)
+addrow('todo_df', 
+       scrapdir, 
+       'orphan_redcap.csv', 
+       paste(nrow(orphan_pats),'Patients added to Estey List but not yet abstracted\n'))
+
+cat(nrow(orphan_pats),'Patients added to Estey List but not yet abstracted\n')
+```
