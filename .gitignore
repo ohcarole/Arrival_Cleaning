@@ -9,3 +9,4 @@
 *.csv
 *.zip
 *.rds
+*.hash.txt
