@@ -143,23 +143,24 @@ print('Done')
 ## ARRIVALS 1-11
 
 ```{r}
-prior       = NULL
-arrival     = NULL
-allprior    = NULL
-allarrival  = NULL
-alltreat    = NULL
-allnotreat  = NULL
-noarrival   = NULL
-allflavor   = NULL
-schema      = 'frozen'
-tblcnt = 11
+schema      <- 'frozen'
+tblcnt      <- 11
+
+arrival_    <- NULL
+notreat_    <- NULL
+prior_      <- NULL
+
+allprior    <- NULL
+alltreat_   <- NULL
+allnotreat  <- NULL
+
 
 for (n in 1:tblcnt) {
   # table for this loop
   tbl <- paste0('arrival',  n)
   
   # Apply the function to the arrival dataframe
-  arrival <- sql_get_table(glue('esteylist_label.arrival{n}')) |>
+  arrival_ <- sql_get_table(glue('esteylist_label.arrival{n}')) |>
     # remove test patients
     filter(ptlastname != 'PATIENT') |>
     # Apply the custom grouping of REDCap checkbox fields into a single column
@@ -191,74 +192,78 @@ for (n in 1:tblcnt) {
     }) |>
     mutate(  arrivalcategory=NA_character_
            # using regular expressions to flag those that didn't get curative treatment
-           , currativerx   = !grepl("(?i)spice|pall?i|comfort|consult|outside|support|opinion|surv|2nd\\s|none|not\\selig|not?\\streat", tolower(treatment))) |>
+           , currativerx   = !grepl("no\\s+rx|no\\s+rec|spice|pall?i|unknown|comfort|consult|outside|support|opinion|surv|2nd\\s|none|not\\selig|not?\\streat", treatment, ignore.case = TRUE)) |>
     select(row_number, recordid, ptmrn, ptlastname, arrivaldate, arrival_rectime, arrivaltable
            , treatment, currativerx, everything())
 
-  arrival <- arrival |>
+  arrival_ <- arrival_ |>
     left_join(patient_list, by = join_by(recordid, ptmrn, ptlastname)) |> 
     left_join(specialty_note, by = join_by(recordid, ptmrn, ptlastname)) |>
     select(row_number, recordid, ptmrn, ptlastname, primary_subject_id, arrivalcategory, everything())
   
-  # Retype arrival to match SQL Server, removed code that did this twice
+  # REFACTOR, this comment doesn't make sense:: Retype arrival to match SQL Server, removed code that did this twice
+  # Only do for arrivals after 1 since the alltreat_ df does not exist yet
   if (n > 1) {
-    arrival <- arrival |>
+    arrival_ <- arrival_ |>
       mutate(across(
-        .cols = intersect(names(arrival), names(alltreat)),
-        .fns = ~ sql_convert_type(.x, alltreat[[cur_column()]])
+        .cols = intersect(names(arrival_), names(alltreat_)),
+        .fns = ~ sql_convert_type(.x, alltreat_[[cur_column()]])
       ))
   }
 
   # identify rows not associated with a treatment
-  # notreat <- arrival |> filter(str_detect(treatment, '(?i)pice|pall|consult|opinion|surv|2nd\\s|(no)+t?\\streat'))
-  notreat <- arrival |> filter(!currativerx) |> mutate(arrivalcategory='notreat')
+  # notreat_ <- arrival_ |> filter(str_detect(treatment, '(?i)pice|pall|consult|opinion|surv|2nd\\s|(no)+t?\\streat'))
+  notreat_ <- arrival_ |> filter(!currativerx) |> mutate(arrivalcategory='notreat')
 
   # keep only rows where there was treatment
-  arrival  <- arrival |> filter(currativerx) |> mutate(arrivalcategory='treated')
+  arrival_  <- arrival_ |> filter(currativerx) |> mutate(arrivalcategory='treated')
 
-  # combine, and make sure to remove dups
-  prior <- bind_rows(lapply(ls(pattern = "^prior_"), get)) # prior <- bind_rows(prior, prior1, prior2, prior3) |> distinct()
-  prior <- distinct(prior) |> mutate(arrivalcategory='prearrival', arrivaltable='prearrival')  
+  # # combine, and make sure to remove dups
+  # prior_ <- bind_rows(lapply(ls(pattern = "^prior_\\d+"), get)) # prior_ <- bind_rows(prior_, prior1, prior2, prior3) |> distinct()
+  # prior_ <- distinct(prior_) |> mutate(arrivalcategory='prearrival', arrivaltable='prearrival')  
+  # 
   
   # remove prior treatments from the arrival data
-  prior_1 <- arrival |> filter(rxline                == 'Treatment prior to AML induction')
-  prior_2 <- arrival |> filter(a_c1treatmentlocation == 'OUT' & a_treatmentlocation   == '')
-  prior_3 <- arrival |> filter(a_treatmentlocation   == 'OUT')
+  prior_1 <- arrival_ |> filter(rxline                == 'Treatment prior to AML induction')
+  prior_2 <- arrival_ |> filter(a_c1treatmentlocation == 'OUT' & a_treatmentlocation   == '')
+  prior_3 <- arrival_ |> filter(a_treatmentlocation   == 'OUT')
   
   # combine, and make sure to remove dups
-  prior <- bind_rows(lapply(ls(pattern = "^prior_"), get)) # prior <- bind_rows(prior, prior1, prior2, prior3) |> distinct()
-  prior <- distinct(prior) |> mutate(arrivalcategory='prearrival', arrivaltable='prearrival')
+  prior_ <- bind_rows(lapply(ls(pattern = "^prior_\\d+"), get)) # prior_ <- bind_rows(prior_, prior1, prior2, prior3) |> distinct()
+  prior_ <- distinct(prior_) |> mutate(arrivalcategory='prearrival', arrivaltable='prearrival')
 
 
   # Remove prior treatment data from the arrival data
-  arrival <- anti_join(arrival, prior, by=join_by(row_number)) 
+  arrival_ <- anti_join(arrival_, prior_, by=join_by(row_number)) 
   
   # set empty structures if needed, usually in just the first loop, these empty structures should be the same
-  if (is.null(allprior) & is.null(alltreat)) {
+  # if (is.null(allprior) & is.null(alltreat_)) {
+  if (n==1) {
     # empty prior structure
-    allprior   <- as.data.frame(prior)[0,]
+    allprior   <- as.data.frame(prior_)[0,]
     # empty arrival structure
-    alltreat <- as.data.frame(arrival)[0,]
+    alltreat_  <- as.data.frame(arrival_)[0,]
     # empty structure for no treatment
-    allnotreat <- as.data.frame(notreat)
+    allnotreat <- as.data.frame(notreat_)
   }
   
   
   # Join arrivals -- arrivals with treatment
-  alltreat <- bind_rows(alltreat, arrival) # |> mutate(row_number = row_number())
+  alltreat_ <- bind_rows(alltreat_, arrival_) # |> mutate(row_number = row_number())
   
   # Join priors -- care prior to first arrival here
-  allprior   <- bind_rows(allprior, prior) |> mutate(row_number = row_number() + nrow(alltreat))
+  allprior  <- bind_rows(allprior, prior_) |> mutate(row_number = row_number() + nrow(alltreat_))
 
   # Join no treatment -- arrivals that were not associated with treatment
-  allnotreat <- bind_rows(allnotreat, notreat) |> mutate(row_number = row_number() + nrow(alltreat) + nrow(allprior))
+  allnotreat <- bind_rows(allnotreat, notreat_) |> mutate(row_number = row_number() + nrow(alltreat_) + nrow(allprior))
   
 
 }
 
-allprior <- allprior |> select(row_number, recordid, ptmrn, ptlastname, arrivaldate, arrival_rectime, arrivaltable
+# this just puts the columns in order
+allprior   <- allprior |> select(row_number, recordid, ptmrn, ptlastname, arrivaldate, arrival_rectime, arrivaltable
            , treatment, currativerx, everything())
-alltreat <- alltreat |> select(row_number, recordid, ptmrn, ptlastname, arrivaldate, arrival_rectime, arrivaltable
+alltreat_  <- alltreat_ |> select(row_number, recordid, ptmrn, ptlastname, arrivaldate, arrival_rectime, arrivaltable
            , treatment, currativerx, everything())
 allnotreat <- allnotreat |> select(row_number, recordid, ptmrn, ptlastname, arrivaldate, arrival_rectime, arrivaltable
            , treatment, currativerx, everything())
@@ -277,6 +282,10 @@ rm(list = ls(pattern = "^notreat"))
 #### allnotreat - patients who were seen in clinic or tele-health but did not get treatment
 
 ```{r}
+
+# restore if needed:
+# Keep a copy, but realize that the data have been incorporated into the df's allarrival, allnotreat, and allprior
+
 ## Before binding allprior and induction check for duplicate introduction
 allprior_  <- allprior
 testbind   <- bind_rows(allprior_, induction) |> distinct(recordid, ptmrn, ptlastname, arrivaldate, arrivaltable, .keep_all = TRUE)
@@ -286,10 +295,13 @@ outlierset <- left_join(outlier, allprior_, by=c('recordid', 'ptmrn', 'ptlastnam
          , starts_with(c('orig_', 'arrivalcategory', 'arrivaldate', 'arrivaltable', 'treatment.', 'treatmentdate.')))
 
 # These are duplicate rows
-make_sheet(outlierset, qcdir, filename="multiple_outside_treatment_and_second_opinion_records")
+if (nrow(outlierset)>0) {
+    make_sheet(outlierset, qcdir, filename="multiple_outside_treatment_and_second_opinion_records")
+}
 
 # remove duplicate rows
 allprior <- anti_join(allprior_, outlier)
+# add in induction records
 allprior <- bind_rows(allprior, induction) |> 
   mutate(arrivaltable = 'prearrival',
          arrivalcategory = 'prearrival') |>
@@ -297,46 +309,53 @@ allprior <- bind_rows(allprior, induction) |>
   # Add a unique arrival identifier as row number
   mutate(row_number = row_number(), .before = 1)
 
-
-allpreabstract <- anti_join(patient_list, bind_rows(alltreat, allprior, allnotreat)) |>
+# patients who appear as a patient but do not have an arrival record are presumed to be pre-abstraction
+allpreabstract_ <- anti_join(patient_list, bind_rows(alltreat_, allprior, allnotreat)) |>
   distinct(recordid, ptmrn, ptlastname, dxdate, .keep_all = TRUE) |>
   mutate(arrivalcategory = 'preabstract', arrivaltable = 'preabstract')
 
-testbind <- bind_rows(alltreat, allpreabstract) %>%
+testbind <- bind_rows(alltreat_, allpreabstract_) %>%
   distinct(recordid, ptmrn, ptlastname, .keep_all = TRUE) %>%
   mutate(row_number = row_number())
 outlier  <- testbind %>% count(recordid, ptmrn, ptlastname) %>% filter(n > 1)
+# These are duplicate rows
+if (nrow(outlier)>0) {
+    stop("This should not happen, pats should not be pre-abstraction and have an arrival with treatment")
+}
 
-# Keeping the pre-abstraction with the treatment arrivals from alltreats
-allarrival <- bind_rows(alltreat, allpreabstract) |> mutate(row_number = row_number())
+# Keeping the pre-abstraction with the treatment arrivals from alltreat_
+allarrival <- bind_rows(alltreat_, allpreabstract_) |> mutate(row_number = row_number())
 
-zz <- allarrival |> group_by(recordid, ptmrn, ptlastname, arrivaldate) |> 
-  mutate(cnt=n()) |> 
-  ungroup() |> 
-  select(row_number, recordid, ptmrn, ptlastname, arrivaldate, cnt)
+# Summarize rows, there should be only one row per person per date
+outlier <- allarrival |> group_by(recordid, ptmrn, ptlastname, arrivaldate) |>
+  mutate(cnt=n()
+         , treatmentsummary = paste0(
+            ifelse(is.na(treatmentdate), "", format(treatmentdate, '[%m/%d/%Y] ')),
+            ifelse(is.na(treatment), "", treatment)),
+            sep = " ") |>
+  ungroup() |>
+  filter(cnt>1) |>
+  arrange(recordid, ptmrn, ptlastname, arrivaldate) |>
+  select(row_number, recordid, ptmrn, ptlastname, arrivalcategory, arrivaldate, arrivaltable=orig_arrivaltable, treatmentsummary)
 
-outlier <- left_join(zz, allarrival, by=c('recordid', 'ptmrn', 'ptlastname')) |> 
-  filter(cnt>1, row_number.x != row_number.y) |> 
-  arrange(recordid, ptmrn, ptlastname, arrivaldate.y) |>
-  select(row_number.x, row_number.y, recordid, ptmrn, ptlastname, cnt
-         , arrivalcategory, arrivaldate.y, arrivaltable, any_of(names(allarrival)))
+if (nrow(outlier)>0) {
+    # These are duplicate rows ... multiple arrivals on a single date
+    make_sheet(outlier, qcdir, filename="multiple_arrivals_on_a_date")
+  }
 
-# These are duplicate rows ... multiple arrivals on a single date
-make_sheet(outlier, qcdir, filename="multiple_arrivals_on_a_date")
+rm(allprior_)
 
 
 ```
 
 ```{r eval=FALSE, message=TRUE, include=FALSE}
-cat("All arrival rows        ", nrow(allarrival), "\tallarrival\t(Treated", nrow(alltreat), glue("and Pre-Abstraction {nrow(allpreabstract)})"), "\n")
-cat("All no treatment rows   ", nrow(allnotreat), "\tallnotreat\n")
-cat("All prior arrival rows  ", nrow(allprior),   "\tallprior\n")
-# cat("All pats with no arrival", nrow(noarrival),  "\tnoarrival\n")
-freq(allnotreat$treatment)
-
-rm(allpreabstract)
-rm(alltreat)
-rm(induction)
+rx  <- nrow(alltreat_)
+pre <- nrow(allpreabstract_)
+cat("All arrival rows        ", nrow(allarrival), glue("\tdf=allarrival (Treated n={rx} and Pre-Abstraction n={pre})"), "\n")
+cat("All no treatment rows   ", nrow(allnotreat), "\tdf=allnotreat\n")
+cat("All prior arrival rows  ", nrow(allprior),   "\tdf=allprior\n")
+df <- freq(allnotreat$treatment)
+head(df, 50)
 ```
 
 ## FHCC FIRST/LAST ARRIVAL
@@ -361,7 +380,6 @@ last_fhcc_arrival <- bind_rows(allarrival, allnotreat) |>
 
 allarrival <- left_join(allarrival, first_fhcc_arrival) |> left_join(last_fhcc_arrival)
 allprior   <- left_join(allprior,   first_fhcc_arrival) |> left_join(last_fhcc_arrival)
-
 
 ```
 
@@ -448,7 +466,7 @@ These records represent all treatment attempts we know about for each patient. S
 
 ```{r}
 # Merge together all arrival from FHCC and all prior to arrival at FHCC
-allarrival <- bind_rows(allarrival, allprior)  |> 
+allarrival_allprior <- bind_rows(allarrival, allprior)  |> 
   arrange(recordid, arrivaldate, treatmentdate, arrivalnum, arrivaltable ) |>
   mutate(row_number = row_number())
 
@@ -462,7 +480,7 @@ Order the treatment attempts within patient by the chronological order in which 
 ```{r}
 # Adding prev/next arrival information}
 # Ranking arrivals
-allarrival <- allarrival |>
+allarrival_allprior <- allarrival_allprior |>
   # mutate(arrival_old = arrival) |>
   arrange(recordid, ptmrn, pmax(arrivaldate, treatmentdate, na.rm = TRUE)) |>
     group_by(recordid) |>
@@ -506,7 +524,7 @@ It also checks for arrival date, missing arrival dates also make it difficult to
 
 ```{r}
 # identify errors
-missing_arrival_order_info <- allarrival |> 
+missing_arrival_order_info <- allarrival_allprior |> 
   # bind_rows(allnotreat) |>
   left_join(patient_list |> select(recordid, patient_list_rectime))  |> 
   arrange(recordid, arrivaldate, treatmentdate, arrivalnum, arrivaltable ) |>
@@ -543,7 +561,7 @@ The process is also sped up because when we make the dated copies it is all done
 
 ```{r}
 # Resize accommodate structure of all the records
-cummarrival <- allarrival |> bind_rows(allnotreat) |> bind_rows(allprior) |> bind_rows(noarrival) |> distinct()
+cummarrival <- allarrival |> bind_rows(allnotreat) |> bind_rows(allprior) |> distinct()
 tempsch = 'scratch'
 sql_drop_tbl(tempsch, 'temp')
 sql_insert_df(cummarrival, 'scratch.temp')
@@ -557,7 +575,6 @@ sql_drop_tbl(tempsch, 'temp')
 x <- sql_insert_df(allarrival, 'frozen.allarrival', date_suffix='%Y%m')
 x <- sql_insert_df(allnotreat, 'frozen.allnotreat', date_suffix='%Y%m') 
 x <- sql_insert_df(allprior,   'frozen.allprior',   date_suffix='%Y%m') 
-
 
 cat('SQL Server updated with allarrival, allnotreat, and allprior tables')
 ```
