@@ -273,6 +273,8 @@ allnotreat <- allnotreat |> select(row_number, recordid, ptmrn, ptlastname, arri
 rm(list = ls(pattern = "^prior"))
 rm(list = ls(pattern = "^arrival"))
 rm(list = ls(pattern = "^notreat"))
+
+cat('Done\n')
 ```
 
 ## SEPARATE INTO 3 ARRIVAL CATEGORIES
@@ -344,6 +346,7 @@ if (nrow(outlier)>0) {
   }
 
 rm(allprior_)
+cat('Done\n')
 
 
 ```
@@ -356,6 +359,9 @@ cat("All no treatment rows   ", nrow(allnotreat), "\tdf=allnotreat\n")
 cat("All prior arrival rows  ", nrow(allprior),   "\tdf=allprior\n")
 df <- freq(allnotreat$treatment)
 head(df, 50)
+
+cat('Done\n')
+
 ```
 
 ## FHCC FIRST/LAST ARRIVAL
@@ -380,6 +386,7 @@ last_fhcc_arrival <- bind_rows(allarrival, allnotreat) |>
 
 allarrival <- left_join(allarrival, first_fhcc_arrival) |> left_join(last_fhcc_arrival)
 allprior   <- left_join(allprior,   first_fhcc_arrival) |> left_join(last_fhcc_arrival)
+cat('Done\n')
 
 ```
 
@@ -457,6 +464,7 @@ if (nrow(outside_rx_discreps) > 0){
   cat('NO OUTSIDE treatments dated before the first arrival recorded at FHCC')
 }
 
+cat('Done\n')
 
 ```
 
@@ -559,22 +567,43 @@ After that the sql_insert_df() command actually appends the data, it does check 
 
 The process is also sped up because when we make the dated copies it is all done server side with SQL pass through.
 
+
+## SEPARATE INTO 3 ARRIVAL CATEGORIES
+
+#### allprior   - arrivals prior to arrival af fhcc
+#### allarrival - arrivals for patients that were treated or are pre-abstraction
+#### allnotreat - patients who were seen in clinic or tele-health but did not get treatment
+
+
 ```{r}
-# Resize accommodate structure of all the records
+# Resize accommodate structure of all the records so that when we append columns won't be customized in width by the sql_insert_df()
 cummarrival <- allarrival |> bind_rows(allnotreat) |> bind_rows(allprior) |> distinct()
-tempsch = 'scratch'
-sql_drop_tbl(tempsch, 'temp')
-sql_insert_df(cummarrival, 'scratch.temp')
-# make empty copies
-sql_copy_tbl(tempsch, 'allnotreat', 'temp', data=FALSE)
-sql_copy_tbl(tempsch, 'allprior',   'temp', data=FALSE)
-sql_copy_tbl(tempsch, 'allarrival', 'temp', data=FALSE)
+tempsch <- 'scratch'
+frosch  <- 'frozen'
 sql_drop_tbl(tempsch, 'temp')
 
+# customize the column width based on this concatenated df
+sql_insert_df(cummarrival, 'scratch.temp')
+
+# make empty copies of the structure
+sql_copy_tbl(frosch, 'allnotreat', tempsch, 'temp', data=FALSE)
+sql_copy_tbl(frosch, 'allprior',   tempsch, 'temp', data=FALSE)
+sql_copy_tbl(frosch, 'allarrival', tempsch, 'temp', data=FALSE)
+
 # insert allarrivals, allnotreat, and allprior twice, normal and again with a date suffix
-x <- sql_insert_df(allarrival, 'frozen.allarrival', date_suffix='%Y%m')
-x <- sql_insert_df(allnotreat, 'frozen.allnotreat', date_suffix='%Y%m') 
-x <- sql_insert_df(allprior,   'frozen.allprior',   date_suffix='%Y%m') 
+sql_insert_df(allarrival, 'frozen.allarrival', date_suffix='%Y%m', overwrite = FALSE) 
+sql_insert_df(allnotreat, 'frozen.allnotreat', date_suffix='%Y%m', overwrite = FALSE) 
+sql_insert_df(allprior,   'frozen.allprior',   date_suffix='%Y%m', overwrite = FALSE) 
+
+# create or update table description
+sql_desc_tbl(paste0(schema, '.allarrival'), desc='arrivals for patients that were treated or are pre-abstraction')
+sql_desc_tbl(paste0(schema, '.allnotreat'), desc='patients who were seen in clinic or tele-health but did not get treatment')
+sql_desc_tbl(paste0(schema, '.allprior'),   desc='arrivals prior to arrival at fhcc')
+
+# print table descriptions after addition/update
+sql_desc_tbl(paste0(schema, '.allarrival'))
+sql_desc_tbl(paste0(schema, '.allnotreat'))
+sql_desc_tbl(paste0(schema, '.allprior'))
 
 cat('SQL Server updated with allarrival, allnotreat, and allprior tables')
 ```
