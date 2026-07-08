@@ -82,6 +82,19 @@ get_pattern_map <- function() {
             "\\bnothing\\b")
   norx <- paste(norx, collapse = "|")
 
+  # venetoclax backbone/agent detection (case-insensitive at match time).
+  # Captures: venetoclax, common typos (ventoclax/venotoclax), the "vene"
+  # shorthand, a standalone "ven" token, and trade/dev codes ABT-199 & GDC-0199.
+  # The standalone-token anchors (\\b...\\b) avoid false hits inside unrelated
+  # words such as "intravenous", "prevent", or "ventricular".
+  ven <- paste0(
+    "\\bvene\\w*",           # venetoclax, vene, and other vene* spellings
+    "|\\bven[eo]?toclax\\b", # ventoclax / venotoclax typos
+    "|\\bven\\d*\\b",        # standalone 'ven' token, incl. day-count suffix (Ven, Ven/Aza, VEN14, VEN21)
+    "|\\bABT[- ]?199\\b",    # ABT-199 / ABT199
+    "|\\bGDC[- ]?0199\\b"    # GDC-0199 / GDC0199
+  )
+
 
   # gclam_base = c("(?:gclam",
   #           "gclam|g\\s*-?\\s*clam",
@@ -124,6 +137,7 @@ get_pattern_map <- function() {
     flag_ida      = "(?=.*flag)(?=.*ida)|\\bflag\\b|\\bfai\\b",
     bend_ida      = "(?=.*bend)(?=.*ida)|2413",
     hma           = "azacitidine|azacitadine|\\baza\\b|\\bazac.*|\\bvidaza\\b|dacogen|decit|inqovi|onureg|2288|9019|2566\\s*\\(td\\)",
+    ven           = ven,
     standard7_3   = standard7_3,
     vyxeos        = "vyxeos|CPX\\s*-\\s*351|\\b(fh)?2642\\b",
     flam          = "\\bflam\\b|2315",
@@ -141,16 +155,19 @@ get_pattern_map <- function() {
     norx          = norx)
 
   # 2) Intensity-ish groupings (adding APL/NoRx bucket)
+  #    'std' (standard intensity) holds 7+3 and Vyxeos/CPX-351; these were
+  #    previously bucketed with 'int' but are classified as standard intensity.
   groups <- list(
     high = c("gclam","clac","iap","flag_ida","hct","flam","mec"),
-    int  = c("vyxeos","reduced","standard7_3","hidac","hypercvad"),
-    low  = c("mini_gclam","ldac","bend_ida","hma","sgn_cd33","single","tose"),
+    std  = c("standard7_3","vyxeos"),
+    int  = c("reduced","hidac","hypercvad"),
+    low  = c("mini_gclam","ldac","bend_ida","hma","ven","sgn_cd33","single","tose"),
     apl  = c("atra"),
     norx = c("norx")
   )
 
   # 3) Global precedence (include apl/norx so you can prioritize them if desired)
-  precedence <- unique(c(groups$high, groups$int, groups$low, groups$apl, groups$norx, groups$unk))
+  precedence <- unique(c(groups$high, groups$std, groups$int, groups$low, groups$apl, groups$norx, groups$unk))
 
   # 4) Pre-computed collapsed patterns per group (build for all groups)
   patterns <- lapply(groups, function(keys) paste0(unname(map[keys]), collapse = "|"))
@@ -177,11 +194,11 @@ get_pattern_map <- function() {
 #' @return data with a new column appended.
 classify_intensity <- function(data, col, new_col = NULL,
                                output   = c("label", "number"),
-                               priority =  c("high","int","low","apl","norx"),
+                               priority =  c("high","std","int","low","apl","norx"),
                                ignore_case = TRUE) {
   stopifnot(is.data.frame(data))
   output   <- match.arg(output)
-  priority <- unique(match.arg(priority, c("high","int","low","apl","norx"), several.ok = TRUE))
+  priority <- unique(match.arg(priority, c("high","std","int","low","apl","norx"), several.ok = TRUE))
 
   col_sym  <- rlang::ensym(col)
   col_name <- rlang::as_string(col_sym)
@@ -212,8 +229,8 @@ classify_intensity <- function(data, col, new_col = NULL,
   data[[new_col]] <- if (output == "label") {
     lab
   } else {
-    # Map labels to ordinal numbers: low=1, int=2, high=3
-    map_num <- c(norx=0L, low=1L, int=2L, high=3L, apl=8L)
+    # Map labels to ordinal numbers: low=1, int=2, std=3, high=4
+    map_num <- c(norx=0L, low=1L, int=2L, std=3L, high=4L, apl=8L)
     unname(map_num[lab])
   }
 
