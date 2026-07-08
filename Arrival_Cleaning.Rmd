@@ -806,7 +806,13 @@ update_classified_treatment <- new_old_classified_treatment %>%
   ) %>%
   ungroup() %>%
   filter(update_flag) %>%
-  select(recordid, ptmrn, ptlastname, ends_with('new')) |>
+  select(recordid, ptmrn, ptlastname, ends_with("new")) %>%
+  mutate(
+    across(
+      .cols = ends_with("_new"),
+      .fns  = as.factor
+    )
+  ) %>%
   rename_with(~ str_remove(.x, "_new"), ends_with("_new"))
 
 # QC Check, one record per patient/recordid
