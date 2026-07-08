@@ -116,8 +116,8 @@ get_pattern_map <- function() {
     "\\bgcla\\b|\\bclam\\b",
     "\\bclag\\b|\\bclag\\s*-?\\s*m?\\b",
     "\\b2734\\b|\\bFH2734\\b|2734\\s*\\(?off",
-    "\\bFH10000\\b))",
-    "\\b7971\\b"
+    "\\bFH10000\\b)",   # closes only the inner (?: opened at "(?:gclam"; the
+    "\\b7971\\b"        # trailing "|\\b7971\\b" then sits inside the wrapper group
   )
   gclam_base <- paste(gclam_base, collapse = "|")
   
