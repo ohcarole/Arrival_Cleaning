@@ -1,0 +1,547 @@
+allarrival_ <- get(backup_name.2)
+FHCC_Care <- get(backup_name.2) |>
+  filter(category=='FH Treatment' | category=='No Treatment') |>
+  filter(!is.na(treatment)) |>
+  group_by(category, treatment, treatmentintensity_calc, treatmentbackbone_calc, treatmentbcrabl_tki, treatmentflt3_tki) |>
+  summarize(instances = n(),
+            .groups='drop') |>
+  arrange(desc(instances))
+
+
+# Take a look at the unique treatment texts by category "FH Treatment"
+Currative_Treatment_at_FHCC <- get(backup_name.2) |>
+  filter(category=='FH Treatment' & currativerx_fhcc & !is.na(treatment) & str_detect(treatment, '(?i)died', negate=TRUE)) |>
+  group_by(category, treatment, treatmentintensity_calc, treatmentbackbone_calc, treatmentbcrabl_tki, treatmentflt3_tki) |>
+  summarize(instances = n(),
+            .groups='drop') |>
+  arrange(desc(instances))
+
+identical(allarrival$treatment_intensity, allarrival_$treatment_intensity)
+
+# Take a look at the unique treatment texts by category "Prior Treatment Outside"
+Currative_Treatment_Outside <- get(backup_name.2) |>
+  filter(category=='Prior Treatment Outside' & currativerx_any & !is.na(treatment)) |>
+  group_by(category, treatment, treatmentintensity_calc, treatmentbackbone_calc, treatmentbcrabl_tki, treatmentflt3_tki) |>
+  summarize(instances = n(),
+            .groups='drop') |>
+  arrange(desc(instances))
+
+make_sheet(FHCC_Care, scrapdir, sheet='data', 'FHCC_Care', time=TRUE, overwrite = TRUE)
+
+
+
+protocol_lkup <- sql_get_table('frozen.protocol_lkup') |>
+  filter(`Protocol.No.`!='RG1001098')
+
+xx <- inner_join(
+  get(backup_name.2) |>
+    select(any_of(idlist), row_number, treatment, arrivaltable, protocol, starts_with('rg')),
+  protocol_lkup |> 
+    mutate(rgnumber_ = `Protocol.No.`,
+           treatment = IRB), 
+    select(rgnumber_, `Protocol.No.`, `IRB`, Title, Short.Title, `PI.Name`),
+  by = 'treatment') |>
+  select(any_of(idlist), row_number, treatment, arrivaltable, starts_with('rg'),
+         rgnumber, protocol, `Protocol.No.`, IRB, Title, Short.Title, `PI.Name`)
+
+yy <- inner_join(
+  get(backup_name.2) |>
+    select(any_of(idlist), row_number, treatment, arrivaltable, protocol, starts_with('rg')),
+  protocol_lkup |> 
+    mutate(rgnumber_ = `Protocol.No.`,
+           protocol = IRB), 
+    select(rgnumber_, `Protocol.No.`, IRB, Title, Short.Title, `PI.Name`),
+  by = 'protocol') |>
+  select(any_of(idlist), row_number, treatment, arrivaltable, starts_with('rg'),
+         rgnumber, protocol, `Protocol.No.`, IRB, Title, Short.Title, `PI.Name`)
+
+
+zz <- get(backup_name.2) |>
+  select(any_of(idlist), row_number, treatment, arrivaltable, starts_with('rg')) |>
+  inner_join(
+    protocol_lkup |>
+      mutate(treatment = `Short.Title`,
+             rgnumber_ = `Protocol.No.` ) |>
+      select(IRB, treatment, rgnumber_, `Protocol.No.`, Title, `Short.Title`, `PI.Name`),
+    by = "treatment"
+  ) |>
+  group_by(across(c(any_of(idlist), row_number, treatment, arrivaltable, rgnumber_, `Protocol.No.`, Title, `Short.Title`, `PI.Name`))) |>
+  summarise(
+    IRB_aliases = str_c(unique(IRB), collapse = "; "),
+    .groups = "drop"
+  )
+
+RG_Number_Updates <- bind_rows(xx, yy, zz) |> 
+  filter(is.na(rgnumber)) |> 
+  mutate(rgnumber = rgnumber_) |>
+  select(any_of(idlist), row_number, treatment, arrivaltable, 
+         rgnumber, `Protocol.No.`, Title, Short.Title, `PI.Name`) |>
+  distinct() |>
+  build_arrivalupdates()
+
+make_sheet(RG_Number_Updates, rcimportdir, filename='RG_Number_Updates', null_as_blank = TRUE)
+
+# identify earliest FHCC arrival
+neatfreq(allarrival$category)
+
+allarrival <- get(backup_name.2)
+
+first_fhcc_arrival <- filter(allarrival, str_detect(category, '(?i)outside', negate=TRUE)) |>
+  mutate(min_date = pmin(arrivaldate, treatmentdate, na.rm = TRUE)) |>
+  select(recordid, min_date) |>
+  filter(!is.na(min_date)) |>
+  group_by(recordid) |>
+  summarise(firstfhccarrivaldate = min(min_date)  # Get min_date for each group
+    , .groups = 'drop')
+
+last_fhcc_arrival <- filter(allarrival, str_detect(category, '(?i)outside', negate=TRUE)) |>
+  mutate(max_date = pmax(arrivaldate, treatmentdate, na.rm = TRUE)) |>
+  select(recordid, max_date) |>
+  filter(!is.na(max_date)) |>
+  group_by(recordid) |>
+  summarise(lastfhccarrivaldate = max(max_date)         # Get max_date for each group            
+    , .groups = 'drop')
+
+
+first_known_arrival <- allarrival |>
+  mutate(min_date = pmin(arrivaldate, treatmentdate, na.rm = TRUE)) |>
+  select(recordid, min_date) |>
+  filter(!is.na(min_date)) |>
+  group_by(recordid) |>
+  summarise(firstknownarrivaldate = min(min_date)  # Get min_date for each group
+    , .groups = 'drop')
+
+last_known_arrival <- allarrival |>
+  mutate(max_date = pmax(arrivaldate, treatmentdate, na.rm = TRUE)) |>
+  select(recordid, max_date) |>
+  filter(!is.na(max_date)) |>
+  group_by(recordid) |>
+  summarise(lastknownarrivaldate = max(max_date)         # Get max_date for each group            
+    , .groups = 'drop')
+
+allarrival <- allarrival |>
+  left_join(first_fhcc_arrival) |>
+  left_join( last_fhcc_arrival) |>
+  left_join(first_known_arrival) |>
+  left_join( last_known_arrival)
+
+backup_name.3 <- paste0('allarrival_', as.character(now()))
+assign(backup_name.3, allarrival)
+allarrival <- get(backup_name.3)
+
+
+cat('Done\n')
+
+
+allarrival <- get(backup_name.3) |> 
+  arrange(recordid, arrivaldate) |>
+  mutate(allarrivalrow = row_number()+10000) |> 
+  select(allarrivalrow, any_of(idlist), everything())
+
+# allarrival <- sql_get_table('frozen.allarrival')
+
+aml_reasons <- c(">20%", ">10%", "t(15;17) (APL)", "t(8;21)", "inv(16)",
+                 "NPM1+", "EMD", "AUL", "MPAL", "tp53", "BPDCN", "Other WHO AML")
+
+arrival_induction_scores <- allarrival |>
+  select(allarrivalrow, any_of(idlist), 
+         currativerx_fhcc, currativerx_any, 
+         category, arrivalnum, arrivaltable,
+         dxdate, arrivaldate, arrivaltype, arrivalchar, rxline, arrivalreason, 
+         arrivalmorphdate, arrivalmorph, arrivalflowdate, arrivalflow,
+         a_treatmentlocation, treatmentdate, treatment, 
+         starts_with(c('treatment', 'first', 'last')), special_population, everything()) |>
+  mutate(
+    num_arrivalmorphnum = as.numeric(str_extract(arrivalmorph, "\\d+(?:\\.\\d+)?")),
+    num_arrivalflownum  = as.numeric(str_extract(arrivalflow,  "\\d+(?:\\.\\d+)?")),
+    days_dx_to_arrival  = as.integer(arrivaldate - dxdate),
+    days_arrival_to_rx  = as.integer(treatmentdate - arrivaldate),
+    days_dx_to_rx       = as.integer(treatmentdate - dxdate),
+    score_1             = as.integer(str_detect(arrivaltype, 'New')) * 2,
+    score_2             = as.integer(rxline=='Ind') * 2,
+    score_3             = as.integer(currativerx_any),
+    score_4             = as.integer(str_detect(arrivaltype, 'New')) + as.integer(rxline=='Ind'),
+    score_5             = as.integer(currativerx_any) + as.integer(str_detect(arrivaltype, 'New')) + as.integer(rxline=='Ind'),
+    score_6             = as.integer(num_arrivalmorphnum >= 10 | num_arrivalflownum >= 20),
+    score_7             = as.integer(arrivalreason %in% aml_reasons),
+    score_8             = as.integer(dxdate <= arrivaldate),
+    score_9             = as.integer(arrivaldate <= treatmentdate),
+    score_10            = as.integer(days_dx_to_arrival <= 30),
+    score_11            = as.integer(days_dx_to_rx <= 30),
+    score_12            = as.integer(arrivaltable=="induction") * 3,
+    score_13            = as.integer(currativerx_any  & is.na(currativerx_fhcc) & str_detect(firstinduction, "outside")) * 2,
+    # (Optional fix) if you meant “has a treatment date”:
+    # score_14         = as.integer(currativerx_any & is.na(currativerx_fhcc) & !is.na(treatmentdate)) * 2,
+    score_14            = as.integer(currativerx_any  & is.na(currativerx_fhcc) & 'treatmentdate'>0) * 2,
+    score_anti_1        = as.integer(str_detect(arrivaltype, '(?i)salvage|mrd')) * -1,
+    score_anti_2        = as.integer(str_detect(rxline, '(?i)s\\d+')) * -1,
+    score_zero_not_curr = as.integer(currativerx_fhcc | is.na(currativerx_fhcc)),
+    score_zero_pre_dx   = as.integer(((days_dx_to_arrival < 90) | is.na(days_dx_to_arrival)) &
+                                     ((days_dx_to_rx      < 90) | is.na(days_dx_to_rx)) &
+                                     !(is.na(days_dx_to_arrival) & is.na(days_dx_to_rx))),
+    score_sub           = rowSums(pick(starts_with("score_")), na.rm = TRUE),
+    score_factored      = score_sub * score_zero_not_curr * score_zero_pre_dx,
+    confidence_score    = score_factored
+  ) |>
+  arrange(recordid, ptmrn, desc(confidence_score), arrivaldate) |>
+  group_by(ptmrn) |>
+  mutate(
+    arrival_cnt           = n(),
+    currativerx_fhcc_cnt  = sum(coalesce(currativerx_fhcc, FALSE)),  # logical-safe count
+    arrseq                = row_number(),
+
+    # Band each row by confidence threshold
+    induction_band = dplyr::case_when(
+      confidence_score >= 14      ~ "strong confidence",
+      confidence_score %in% 12:13 ~ "confident",
+      confidence_score %in% 10:11 ~ "not confident",
+      .default = NA_character_
+    ),
+
+    # Candidate rows are those above threshold
+    .induction_candidate = !is.na(induction_band),
+
+    # Keep ONLY the first candidate per patient as TRUE; everything else FALSE
+    induction = .induction_candidate & cumsum(.induction_candidate) == 1,
+
+    # Descriptive label only on the TRUE row
+    induction_confidence = if_else(induction, induction_band, NA_character_)
+  ) |>
+  ungroup() |>
+  select(
+    allarrivalrow, any_of(idlist), arrseq,
+    induction, induction_confidence, confidence_score,
+    ends_with('_cnt'),
+    starts_with(c('curr', 'num_', 'days', 'score_anti', 'score_zero')),
+    everything()
+  )
+
+induction.pool <- arrival_induction_scores |>
+  filter(str_detect(rxline, '(?i)(consult|prior)', negate=TRUE)) |>
+  filter(arrivaltable!='patient_list') |>
+  arrange(recordid, desc(confidence_score), arrivaldate) |>
+  group_by(across(all_of(idlist))) |>
+  slice(1) |>
+  ungroup() |>
+  mutate(ptlastname = toupper(ptlastname),
+         inductionarrivallocation=a_treatmentlocation,
+         inductionarrivaltreatmentdate=treatmentdate,
+         inductionarrivaltreatment=treatment,
+         inductionarrivalintensity=treatmentintensity_calc,
+         inductionarrivalbackbone=treatmentbackbone_calc,
+         inductionarrivalbcrabl=treatmentbcrabl_tki,
+         inductionarrivalflt3=treatmentflt3_tki,
+         inductionarrivaltreatmentmap=case_when(
+           confidence_score==0  ~ 'Not induction',
+           confidence_score>=14 ~ paste0('Induction (strong confidence=',confidence_score,')'),
+           confidence_score>=12 ~ paste0('Induction (confident=',confidence_score,')'),
+           confidence_score>=10 ~ paste0('Induction (not confident=',confidence_score,')'),
+           confidence_score<10  ~ paste0('Undertermined (confidence=',confidence_score,')'),
+           arrivaltable == 'patient_list' ~ 'Pre-Abstraction',
+           TRUE~'Fallout'),
+         inductionarrivaldxtorxdays=days_dx_to_rx,
+         inductionarrivaldate=arrivaldate,
+         inductionarrivalnum=arrivalnum,
+         inductionarrivaltable=arrivaltable,
+         inductionarrivaltype=arrivaltype, # should be ND, but isn't always
+         inductionarrivalrxline=rxline, # should be Ind, but isn't always
+         inductionarrivalmorphdate=arrivalmorphdate,
+         inductionarrivalmorph=arrivalmorph,
+         inductionarrivalflowdate=arrivalflowdate,
+         inductionarrivalflow=arrivalflow
+         ) |>
+  select(allarrivalrow, any_of(idlist), dxdate, starts_with('inductionarrival'), everything())
+
+rcexportdf <- induction.pool |>
+  mutate(is_inductionarrival=currativerx_any & confidence_score >= 10
+         , ptlastname = toupper(ptlastname)) |>
+  select(is_inductionarrival, any_of(idlist), 
+         starts_with(c("inductionarrival")),
+         firstfhccarrivaldate, firstknownarrivaldate,
+         lastfhccarrivaldate,  lastknownarrivaldate, 
+         -inductionarrivaldxtorxdays, -inductionarrivaltreatmentmap) |>
+  mutate(across(where(is.Date), ~ format(., "%Y-%m-%d"))) |>
+  mutate(across(everything(), ~ ifelse(is.na(.), "", .)))
+
+rcexportdf_keep <- rcexportdf |> 
+  filter(is_inductionarrival) |>
+  select(any_of(idlist), is_inductionarrival, starts_with('inductionarrival'))
+
+allarrival <- allarrival |> left_join(rcexportdf_keep, by=idlist)
+
+indarrival <- allarrival %>%
+  group_by(recordid, ptmrn, ptlastname) %>%
+  arrange(desc(is_inductionarrival)) %>%     # put TRUE first
+  slice_head(n = 1) %>%                      # keep only the first row per group
+  ungroup() %>%
+  mutate(is_inductionarrival=as.integer(is_inductionarrival),
+         ptlastname=toupper(ptlastname))  |>
+  filter(inductionarrivaltable!='patient_list') |>
+  select(any_of(idlist), inductionarrivalcategory=category, starts_with("inductionarrival"))
+
+make_sheet(indarrival, rcimportdir, filename="induction_import", overwrite = TRUE, null_as_blank = TRUE)
+
+backup_name.4 <- paste0('allarrival_', as.character(now()))
+assign(backup_name.4, allarrival)
+allarrival <- get(backup_name.4)
+
+
+
+allarrival <- get(backup_name.4)
+
+allarrival <- allarrival |>
+  arrange(recordid, arrivaldate, treatmentdate, arrivalnum, arrivaltable) |>
+  select(-row_number) |>
+  mutate(row_number = row_number()+10000) |>
+  group_by(recordid, ptmrn, ptlastname) |>
+  mutate(arrivalsequence = row_number(),
+         arrivalcnt = n(),
+         prevarrivaldate=lag(arrivaldate),
+         prevarrivalcategory=lag(arrivalcategory),
+         prevtreatmentdate=lag(treatmentdate),
+         prevtreatment=lag(treatment),
+         prevrxline=lag(rxline),
+         nextarrivaldate=lead(arrivaldate),
+         nextarrivalcategory=lead(arrivalcategory),
+         nexttreatmentdate=lead(treatmentdate),
+         nexttreatment=lead(treatment),
+         nextrxline=lead(rxline)
+         ) |>
+  ungroup() |>
+  select(row_number, arrivalsequence, any_of(idlist), primary_subject_id
+         , category, arrivalcnt, firstfhccarrivaldate, lastfhccarrivaldate
+         , starts_with(c('arrival', 'prev', 'next')), everything())
+
+
+arrivaldate_after_treatmentdate <- allarrival |>
+  filter(str_detect(category, '(?i)(no\\streatment|without)', negate=TRUE)) |>
+  mutate(days_arrival_to_rx = as.integer(treatmentdate-arrivaldate),
+         days_morph_to_rx   = as.integer(treatmentdate-arrivalmorphdate)) |>
+  filter(days_arrival_to_rx < -7 & days_morph_to_rx < -7) |>
+  select(any_of(idlist), starts_with('days_'), category, 
+         arrivaldate, rxline, arrivalmorphdate, 
+         treatmentdate, treatment, 
+         nextarrivaldate, nextrxline)
+
+make_sheet(arrivaldate_after_treatmentdate, qcdir, 'data', 'suspicious arrival date')
+
+# # identify errors
+# missing_arrival_date <- allarrival |>
+#   filter(str_detect(arrivaltable, '^arrival') &
+#            recordid > 1000 &
+#            ptlastname != 'PATIENT' &
+#            str_detect(special_population,'(Older AML.*|Mucor.*)', negate=TRUE) &
+#            (is.na(arrivaldate) | arrivalnum == "")) |>
+#   select(  any_of(idlist), arrival_rectime
+#          , arrivaltable=orig_arrivaltable, arrivaldate, arrivaltype, rxline, arrivalnote
+#          , treatmentdate, treatmentnote, special_population )
+# 
+# 
+# if (nrow(missing_arrival_date) > 0){
+#   # Create excel for data cleaning
+#   make_sheet(missing_arrival_date, scrapdir, 'no_arrival_date', 'missing_arrival_date', 'xlsx', overwrite=TRUE )
+#   # Add to table of things to correct
+#   addrow('todo_df', scrapdir, 'missing_arrival_date.xlsx', 'Review for arrival date missing and arrival number order')
+#   cat('\nReport Missing Arrival Sequence number or Arrival Date')
+# } else {
+#   cat('\nNo Missing Arrival Sequence number or Arrival Date')
+# }
+
+# Resize accommodate structure of all the records so that when we append columns won't be customized in width by the sql_insert_df()
+tempsch <- 'scratch'
+frosch  <- 'frozen'
+sql_drop_tbl(tempsch, 'temp')
+
+# customize the column width based on this concatenated df
+sql_insert_df(allarrival, 'scratch.temp')
+
+# make empty copies of the structure
+sql_copy_tbl(frosch, 'allarrival', tempsch, 'temp', data=FALSE)
+
+# insert allarrivals, allnotreat, and allprior twice, normal and again with a date suffix
+sql_insert_df(allarrival, 'frozen.allarrival', date_suffix='%Y%m', overwrite = FALSE) 
+# create or update table description
+sql_desc_tbl(paste0(frosch, '.allarrival'), desc='All arrivals.  The columns category, currativerx_fhcc, and currativerx_any are helpful in determining sub populations')
+
+# insert induction arrival data into frozen schema on SQL Server
+sql_insert_df(indarrival, 'frozen.indarrival', date_suffix='%Y%m', overwrite = TRUE) 
+# create or update table description
+sql_desc_tbl(paste0(frosch, '.indarrival'), desc='Arrivals that are calculated to be first AML induction')
+
+
+# print table descriptions after addition/update
+sql_desc_tbl(paste0(frosch, '.allarrival'))
+
+cat('SQL Server updated with allarrival, and dated copy')
+
+# # pivoting wide to get this into a format for upload to REDCap
+# uploaddf <- allarrival |>
+#   filter(str_detect(arrivaltable, "arrival\\d+")) |>
+#   mutate(
+#     arrival_num = parse_number(arrivaltable),
+#     ptlastname  = toupper(ptlastname)
+#   ) |>
+#   filter(dplyr::between(arrival_num, 1, 11)) |>
+#   select(
+#     any_of(idlist),
+#     arrival_num,
+#     treatment,
+#     treatmentintensity = treatment_intensity,
+#     treatmentbackbone  = treatment_backbone
+#   ) |>
+#   # Normalize empties to NA so we can reason cleanly
+#   mutate(
+#     treatment           = dplyr::na_if(trimws(treatment), ""),
+#     treatmentintensity  = dplyr::na_if(trimws(treatmentintensity), ""),
+#     treatmentbackbone   = dplyr::na_if(trimws(treatmentbackbone), "")
+#   ) |>
+#   # Apply REDCap upload rules:
+#   # - If no treatment: mapped fields should be blank (leave NA; pivot will fill "")
+#   # - If treatment exists but mapping is missing: use "no map"
+#   mutate(
+#     treatmentintensity = dplyr::case_when(
+#       is.na(treatment)                      ~ NA_character_,
+#       !is.na(treatment) & is.na(treatmentintensity) ~ "no map",
+#       TRUE ~ treatmentintensity
+#     ),
+#     treatmentbackbone = dplyr::case_when(
+#       is.na(treatment)                      ~ NA_character_,
+#       !is.na(treatment) & is.na(treatmentbackbone)  ~ "no map",
+#       TRUE ~ treatmentbackbone
+#     )
+#   ) |>
+#   tidyr::pivot_wider(
+#     id_cols     = any_of(idlist),
+#     names_from  = arrival_num,
+#     values_from = c(treatmentintensity, treatmentbackbone),
+#     names_glue  = "{.value}_calc{arrival_num}",
+#     names_sort  = TRUE,
+#     # Prefer a real value over "no map"; fall back to "no map"; else blank via values_fill
+#     values_fn   = ~ {
+#       x <- .x[!is.na(.x) & .x != ""]
+#       if (length(x) == 0) return("")
+#       real <- x[x != "no map"]
+#       if (length(real) > 0) real[[1]] else x[[1]]
+#     },
+#     values_fill = ""
+#   )
+# 
+# make_sheet(uploaddf, rcimportdir, filename='upload_arrival_treatment_summary', overwrite = TRUE)
+
+# # Are there prior arrivals dated after first FHCC arrival/treatment
+# 
+# # Have staff review any of these where arrival date is after first FHCC arrival, but Rx date is not
+# late_outside_arrival <- allprior |>
+#   mutate(  priorarrivaldate    = arrivaldate
+#          , priortreatmentdate  = treatmentdate
+#          , afterfirstarrival   = priorarrivaldate   > firstfhccarrivaldate
+#          , afterfirsttreatment = priortreatmentdate > firstfhccarrivaldate
+#          , reviewreason = paste('Arrival date',arrivaldate
+#                                 ,'is after first arrival on',firstfhccarrivaldate)) |>
+#   filter(  afterfirstarrival & !afterfirsttreatment) |>
+#   select(  recordid, ptmrn, ptlastname
+#          , priorarrivaldate, priortreatmentdate, firstfhccarrivaldate, patient_list_rectime)
+# 
+# # Have staff review any of these where treatment date is after first FHCC arrival, but prior Rx arrival date is not
+# late_outside_treatment <- allprior |>
+#   mutate(  priorarrivaldate    = arrivaldate
+#          , priortreatmentdate  = treatmentdate
+#          , afterfirstarrival   = priorarrivaldate   > firstfhccarrivaldate
+#          , afterfirsttreatment = priortreatmentdate > firstfhccarrivaldate
+#          , reviewreason = paste('Outside arrival on',priorarrivaldate,
+#                                 'is before first arrival on',firstfhccarrivaldate,
+#                                 'but associated rx on',priortreatmentdate,'is not.')) |>
+#   filter(  rxline!="" & afterfirsttreatment  & !afterfirstarrival) |>
+#   select(  recordid, ptmrn, ptlastname, reviewreason, rxline
+#          , priorarrivaldate, priortreatmentdate, firstfhccarrivaldate, patient_list_rectime)
+# 
+# # Discrepancy report
+# outside_rx_discreps <- bind_rows(late_outside_arrival, late_outside_treatment)
+# rm(list = ls(pattern = "^late_outside_"))
+# 
+# if (nrow(outside_rx_discreps) > 0){
+#   # Create excel for data cleaning
+#   make_sheet(outside_rx_discreps, scrapdir, 'errordata', 'outside_after_FHCC_arrival', 'xlsx', overwrite=TRUE )
+#   # Add to table of things to correct
+#   addrow('todo_df', scrapdir, 'outside_after_FHCC_arrival.xlsx', 'Review for arrival date, treatment date or treatment location errors.')
+#   cat('ERROR CHECK OUTSIDE treatments dated before the first arrival recorded at FHCC')
+# } else {
+#   cat('NO OUTSIDE treatments dated before the first arrival recorded at FHCC')
+# }
+# 
+# cat('Done\n')
+# 
+
+# # Merge together all arrival from FHCC and all prior to arrival at FHCC
+# allarrival_allprior <- bind_rows(allarrival, allprior)  |>
+#   arrange(recordid, arrivaldate, treatmentdate, arrivalnum, arrivaltable ) |>
+#   mutate(row_number = row_number())
+# 
+# cat('Merge prior arrivals with FHCC arrivals')
+
+# # Adding prev/next arrival information}
+# # Ranking arrivals
+# allarrival_allprior <- allarrival_allprior |>
+#   # mutate(arrival_old = arrival) |>
+#   arrange(recordid, ptmrn, pmax(arrivaldate, treatmentdate, na.rm = TRUE)) |>
+#     group_by(recordid) |>
+#       mutate(
+#         prevarrivaldate   = lag(arrivaldate),
+#         prevarrivaltype   = lag(arrivaltype),
+#         prevarrivalreason = lag(arrivalreason),
+#         prevarrivalmorph  = lag(arrivalmorph),
+#         prevarrivalflow   = lead(arrivalflow),
+# 
+#         nextarrivaldate   = lead(arrivaldate),
+#         nextarrivaltype   = lead(arrivaltype),
+#         nextarrivalreason = lead(arrivalreason),
+#         nextarrivalmorph  = lead(arrivalmorph),
+#         nextarrivalflow   = lead(arrivalflow),
+# 
+#         # Adding ranking
+#         arrival = row_number(),
+# 
+#         # Count all treatment plans
+#         allarrivalcnt = n(),
+# 
+#         # Count FHCC arrivals
+#         fhccarrivalcnt = sum(grepl("^arr", arrivaltable))
+# 
+# 
+#       ) |>
+#     ungroup() |>
+#     select(recordid, ptmrn, arrival, everything())
+# 
+# cat('Rank Patient Arrivals with prev/next')
+
+# # duplicate check
+# allarrival_ <- allarrival |>
+#   filter(str_detect(rxline, "(?i)consult", negate=TRUE)) |>
+#   filter(category != 'No Treatment') |>
+#   select(any_of(idlist), rxline, treatment, everything())
+# 
+# allarrival_dups <- allarrival_ |>
+#   group_by(recordid) |>
+#   arrange(arrivaldate) |>
+#   mutate(next_arrival = lead(arrivaldate)) |>
+#   mutate(next_category = lead(category)) |>
+#   mutate(next_rxline = lead(rxline)) |>
+#   mutate(next_firstinduction = lead(firstinduction)) |>
+#   mutate(next_arrivaltable = lead(arrivaltable)) |>
+#   mutate(date_diff = as.numeric(next_arrival - arrivaldate)) |>
+#   filter(!is.na(date_diff) & abs(date_diff) <= 14) |>
+#   mutate(arrivalerror = paste0(
+#     format(arrivaldate, "%Y-%m-%d"), " | ",
+#     format(next_arrival, "%Y-%m-%d"),
+#     " (", date_diff, " days apart)"
+#   )) |>
+#   select(recordid, date_diff, arrivalerror,
+#          arrivaldate, next_arrival,
+#          category, next_category,
+#          rxline, next_rxline,
+#          next_firstinduction, firstinduction,
+#          next_arrivaltable, arrivaltable)
+# 
+# allarrival <- allarrival |>
+#   left_join(allarrival_dups |> select(recordid, arrivalerror), by = "recordid") |>
+#   select(any_of(idlist), arrivalerror, everything())

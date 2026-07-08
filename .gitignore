@@ -11,7 +11,6 @@
 *.rds
 *.hash.txt
 .positai
-R/*.R
 R/*.md5
 R/ignore_backups/*
 helper.Rmd
