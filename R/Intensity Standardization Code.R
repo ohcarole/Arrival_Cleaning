@@ -138,8 +138,7 @@ get_pattern_map <- function() {
     bend_ida      = "(?=.*bend)(?=.*ida)|2413",
     hma           = "azacitidine|azacitadine|\\baza\\b|\\bazac.*|\\bvidaza\\b|dacogen|decit|inqovi|onureg|2288|9019|2566\\s*\\(td\\)",
     ven           = ven,
-    standard7_3   = standard7_3,
-    vyxeos        = "vyxeos|CPX\\s*-\\s*351|\\b(fh)?2642\\b",
+    std           = paste0(standard7_3, "|", "vyxeos|CPX\\s*-\\s*351|\\b(fh)?2642\\b"),
     flam          = "\\bflam\\b|2315",
     atra          = "\\batra\\b",
     hct           = "\\bhct\\b|\\ballo|\\btbi\\b|transplant|flu|\\b7617\\b|\\bbu(-|\\s|\\+)?cy\\b",
@@ -155,19 +154,18 @@ get_pattern_map <- function() {
     norx          = norx)
 
   # 2) Intensity-ish groupings (adding APL/NoRx bucket)
-  #    'std' (standard intensity) holds 7+3 and Vyxeos/CPX-351; these were
-  #    previously bucketed with 'int' but are classified as standard intensity.
+  #    The 'std' backbone (7+3 and Vyxeos/CPX-351) sits in the 'int' intensity
+  #    group: it carries backbone label "std" but intermediate intensity.
   groups <- list(
     high = c("gclam","clac","iap","flag_ida","hct","flam","mec"),
-    std  = c("standard7_3","vyxeos"),
-    int  = c("reduced","hidac","hypercvad"),
+    int  = c("std","reduced","hidac","hypercvad"),
     low  = c("mini_gclam","ldac","bend_ida","hma","ven","sgn_cd33","single","tose"),
     apl  = c("atra"),
     norx = c("norx")
   )
 
   # 3) Global precedence (include apl/norx so you can prioritize them if desired)
-  precedence <- unique(c(groups$high, groups$std, groups$int, groups$low, groups$apl, groups$norx, groups$unk))
+  precedence <- unique(c(groups$high, groups$int, groups$low, groups$apl, groups$norx, groups$unk))
 
   # 4) Pre-computed collapsed patterns per group (build for all groups)
   patterns <- lapply(groups, function(keys) paste0(unname(map[keys]), collapse = "|"))
@@ -194,11 +192,11 @@ get_pattern_map <- function() {
 #' @return data with a new column appended.
 classify_intensity <- function(data, col, new_col = NULL,
                                output   = c("label", "number"),
-                               priority =  c("high","std","int","low","apl","norx"),
+                               priority =  c("high","int","low","apl","norx"),
                                ignore_case = TRUE) {
   stopifnot(is.data.frame(data))
   output   <- match.arg(output)
-  priority <- unique(match.arg(priority, c("high","std","int","low","apl","norx"), several.ok = TRUE))
+  priority <- unique(match.arg(priority, c("high","int","low","apl","norx"), several.ok = TRUE))
 
   col_sym  <- rlang::ensym(col)
   col_name <- rlang::as_string(col_sym)
@@ -229,8 +227,8 @@ classify_intensity <- function(data, col, new_col = NULL,
   data[[new_col]] <- if (output == "label") {
     lab
   } else {
-    # Map labels to ordinal numbers: low=1, int=2, std=3, high=4
-    map_num <- c(norx=0L, low=1L, int=2L, std=3L, high=4L, apl=8L)
+    # Map labels to ordinal numbers: low=1, int=2, high=3
+    map_num <- c(norx=0L, low=1L, int=2L, high=3L, apl=8L)
     unname(map_num[lab])
   }
 
