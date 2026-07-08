@@ -71,10 +71,10 @@ function_rmds = c(
       "import_export.Rmd",
       "redcap_api.Rmd",
       "karyotype_function_set.Rmd",
-      "timelink.Rmd",
-      "Intensity Standardization Code.Rmd")
+      "timelink.Rmd")
 icicle_setup(function_rmds = function_rmds)
 idlist      <- c('recordid', 'ptmrn', 'ptlastname')
+source("R/Intensity Standardization Code.R")
 ```
 
 ```{r helper}
