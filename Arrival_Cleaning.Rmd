@@ -409,12 +409,25 @@ allarrival   <- bind_rows(allarrival, allpreabstract) |>
 
 neatfreq(allarrival$category)
 
-# find instances where one has date and other does not
+# Align date-column types across the two frames before the row-bind.
+# Root cause: `allarrival` carries arrival/treatment dates as class Date while the
+# `induction` frame (built from the ported Diagnosis REDCap) still holds some of
+# the same columns as character. bind_rows() then either errors ("Can't combine
+# <date> and <character>") or, once one side is coerced with a bare as.Date(),
+# silently turns non-ISO strings into NA. Previously only columns whose Date-ness
+# *differed* were coerced (compare_col_types) and with as.Date()'s default format.
+# Fix: coerce every column that is Date in EITHER frame (and common to both) on
+# BOTH sides using as_date_safe(), which tries known formats and reports parse
+# failures instead of dropping them silently.
 induction  <- induction_ # reset in case I am debugging
 
-date_cols  <- compare_col_types(allarrival, induction, target_class = "Date") 
-allarrival <- allarrival |> mutate(across(any_of(date_cols), as.Date))
-induction  <- induction  |> mutate(across(any_of(date_cols), as.Date))
+date_cols <- union(
+  names(allarrival)[vapply(allarrival, inherits, logical(1), "Date")],
+  names(induction )[vapply(induction , inherits, logical(1), "Date")]
+)
+date_cols  <- intersect(date_cols, intersect(names(allarrival), names(induction)))
+allarrival <- allarrival |> mutate(across(any_of(date_cols), as_date_safe))
+induction  <- induction  |> mutate(across(any_of(date_cols), as_date_safe))
 
 allarrival <- bind_rows(allarrival, induction |> mutate(category='Prior Treatment Outside')) |>
   mutate(row_number=row_number()+10000,
@@ -665,6 +678,18 @@ allarrival   <- bind_rows(allarrival, allpreabstract) |>
          any_of(c(idlist, 'category', 'arrivaldate', 'arrival_rectime', 'arrivaltable'
                 , 'redcap_table', 'treatment', 'currativerx_fhcc'))
                 , everything())
+
+# Align date-column types across both frames before the row-bind (see the
+# earlier bind for the full root-cause note): coerce every column that is Date
+# in EITHER frame (and common to both) on BOTH sides with as_date_safe(), which
+# tries known formats and surfaces parse failures instead of silent NA.
+date_cols <- union(
+  names(allarrival)[vapply(allarrival, inherits, logical(1), "Date")],
+  names(induction )[vapply(induction , inherits, logical(1), "Date")]
+)
+date_cols  <- intersect(date_cols, intersect(names(allarrival), names(induction)))
+allarrival <- allarrival |> mutate(across(any_of(date_cols), as_date_safe))
+induction  <- induction  |> mutate(across(any_of(date_cols), as_date_safe))
 
 allarrival <- bind_rows(allarrival, induction |> mutate(category='Prior Treatment Outside')) |>
   mutate(row_number=row_number()+10000,
