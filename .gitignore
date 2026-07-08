@@ -10,3 +10,6 @@
 *.zip
 *.rds
 *.hash.txt
+.positai
+R/*.R
+R/*.md5
