@@ -1,0 +1,911 @@
+---
+title: "Arrival_Cleaning"
+author: "Carole Shaw"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## Purpose
+
+This script is designed to put arrival data together and to distinguish data collected for treatment prior to FHCC arrival, arrivals associated with FHCC care, patients who have not had any arrival data entered yet, and arrivals that not associated with a currative treatment at FHCC (i.e. comfort care/consult) . The plan is to add resulting data from this routine to SQL Server updating it with the weekly workflow so that the data will be consistently compiled and updated over time.\
+\
+The data created here are joined with other source data, such as transplant data, epic report data, and eventually with CORTEX downloads during the creation of the frozen data.
+
+## Background:
+
+Currently patient treatment plans each generate a new arrival. Usually those are entered in sequential order, and for those that have had their first treatment here the arrival 1 form contains their first treatment here for AML, either frank disease or \>10% blasts. On those records the arrival table is arrival1, the arrivalnum is also 1, and the treatment location is FHCC.
+
+Some patients first were treated at an outside location. There are a few ways that an outside treatment may have been entered into our system. 1) Induction may have been entered into the Diagnosis REDCap, which is now defunct, but induction associated was imported into the 'induction' form of the Estey List REDCap project. 2) An arrival may have been entered as arrivalnum "-1" to indicate an arrival that occurred prior to arrival at FHCC, or 3) an arrival may be entered with location of treatment "OUT" to indicate treatment from an outside location, often (but not always), indicating treatment prior to arrival at FHCC.
+
+We formerly did not enter outside treatment into arrival forms, when that was the case location was implied to be FHCC. The default for location is therefore FHCC when no location is given.
+
+There are some cases where an outside arrival is dated *after* the first FHCC arrival. When that is not associated with hospice/palliative/no treatment those cases should be set aside for review.
+
+If corrections are made to data in REDCap, the REDCap data need to be imported anew for corrections to be reflected here.
+
+## Plan
+
+So the logic in this program is:
+
+1)  Identify any treatment imported from the defunct Diagnosis REDCap into the induction table (**done**)
+2)  Separate arrivals outside treatments into allprior table (**done**)
+3)  Separate arrivals represent a treatment at FHCC or without a treatment location into allarrival table (**done**)
+4)  Merge arrivals identified from the induction table with those from the allprior, remove duplicates (**done**)
+5)  From the allarrival table, find the earliest arrival for each patient into a table first_fhcc_arrival (**done**)
+6)  Compare allprior arrivals to the first_fhcc_arrival for each patient to find those that need to be set aside for review, ignoring any where the treatment was No Treatment, Hospice or Palliative. (**done**)
+7)  If data cleaning to the REDCap instance occurred at step 6, update REDCap data on SQL server and then re-run steps 1-6, otherwise go on to step 8. (**done**)
+8)  Put together the allarrival table with those remaining in the allprior table. (**done**)
+9)  Assign sequence to patient arrivals ordering by arrivaldate, treatmentdate. Using treatment date because many of the outside treatments don't have a concept of arrival. (**done**)
+10) Copy the allarrival data to SQL Server. (**done**)
+11) Add this script to the weekly workflow, just after import of REDCap data. (**done**)
+12) Run the script: Coding and Data Acquisition/R Scripts/Frozen to SQLServer/**Frozen_Data_to_SQLServer.Rmd** to update the frozen data. The script exists, and has been retooled to expect an allarrival table on SQL Server at frozen.allarrival. (**done**)
+
+# SETUP
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, fig.show = 'asis')
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+```
+
+#### LIBRARIES AND FUNCTIONS
+
+Most libraries are loaded with icicles. Recompile the icicle functions every time to incorporate changes.
+
+```{r library}
+codedir <<- gsub("\\\\", "/", Sys.getenv('FROZEN_PATH', unset = NA))
+source(paste0(codedir,'/icicle_setup.R'))
+icicle_setup()
+idlist      <- c('recordid', 'ptmrn', 'ptlastname')
+```
+
+## HELPER FUNCTIONS
+
+#### is_currative_rx(treatment)
+
+```{r}
+is_currative_rx <- function(treatment) {
+  
+  # Patterns indicating non-currative or unrelated treatments
+  pattern <- paste(
+    "no\\s+rx",       # Explicitly "no rx" — no treatment given
+    "no\\s+rec",      # "no record" or "no recommendation"
+    "spice",          # hospice
+    "pall?(i|a)",     # "palli", "palla", "pali", or "pala" — palliative
+    "unknown",        # Treatment unknown
+    "comfort",        # Comfort care
+    "consult",        # Consult only — no intent to treat
+    "outside",        # Treated outside, not actionable here
+    "support",        # Supportive care
+    "opinion",        # Second opinion only, not treatment
+    "survillance?",   # Surveillance
+    "watch\\s*wait",  # Surveillance
+    "2nd\\s",         # Second opinion only, not treatment
+    "none",           # No treatment
+    "not\\selig",     # Not eligible for treatment
+    "not?\\streat",   # Not treated / no treatment given
+    sep = "|"
+  )
+  
+  # Return TRUE if no non-currative indicators found (i.e., likely currative intent)
+  !grepl(pattern, treatment, ignore.case = TRUE)
+}
+
+
+```
+#### build_arrivalupdates(rg_df, rcimportdir, forms = 1:6, idlist = c("recordid", "ptmrn", "ptlastname")
+
+```{r}
+build_arrivalupdates <- function(rg_df = RG_Number_Updates, 
+                                 forms = 1:11, 
+                                 idlist = c("recordid", "ptmrn", "ptlastname")) {
+  
+  if (FALSE) {
+    rg_df = RG_Number_Updates
+    forms = 1:11
+    idlist = c("recordid", "ptmrn", "ptlastname")
+  }
+  
+  arrival_list <- list()
+  
+  i = 1
+  for (i in forms) {
+    form_label <- paste0("arrival", i)
+    
+    arrival <- rg_df |>
+      filter(arrivaltable == form_label) |>
+      mutate(ptlastname = toupper(ptlastname)) |>
+      select(recordid, ptmrn, ptlastname, rgnumber, `Short.Title`, `PI.Name`) |>
+      rename(
+        !!paste0("rgnumber", i)     := rgnumber,
+        !!paste0("short_title", i) := `Short.Title`,
+        !!paste0("pi_name", i)     := `PI.Name`
+      )
+    
+    if (nrow(arrival)==0) next
+    arrival_list[[form_label]] <- arrival
+
+  }
+  
+  # Create master ID list
+  all_ids <- bind_rows(arrival_list) |>
+    distinct(across(all_of(idlist))) |>
+    select(any_of(idlist))
+  
+  # Left join each arrival sheet by ID
+  arrivalupdates <- reduce(
+    arrival_list,
+    .f = ~ left_join(.x, .y, by = idlist),
+    .init = all_ids
+  )
+  
+  # Explicitly ordered joins
+  arrivalupdates <- all_ids
+  for (form_label in names(arrival_list)) {
+    arrivalupdates <- left_join(arrivalupdates, arrival_list[[form_label]], by = idlist)
+  }
+  
+  return(arrivalupdates)
+}
+
+
+```
+
+#### rx_stand(df, col)
+
+Standardize treatment - This is a basic standardization looking at drugs and switches to a common name.  
+
+Returns the df with a new column with the suffix "_clean" added to the column passed in.
+
+Processing:
+
+Removes all text coming after a pipe symbol.  "|" 
+Makes no further changes if the text contains "/" because this is use both to mean "and" or also "or"
+If no "/" is found:
+  Removes references to Salvage (like S1) or Cycle (like C1)
+  Removes dates formatted like mm/dd/yyyy or mm-dd-yyyy or yyyy-mm-dd
+  Removes dosage information like "daily" "injection" "Q1" "100mg/m2" "50mg/m²" "12 day" "3 days" "IV" "PO"
+  Removes words describing the phase, location, or result like "consolidation" "maintenance" "outside" "refractory"
+Standardizes punctuation:  
+  Removes dbl spaces or symbols
+  
+
+```{r}
+
+rx_stand <- function(df=induction, col='treatment') {
+  # df <- induction
+  # col <- 'treatment'
+  new <- paste0(col, '_clean')
+
+  rslt <- df |>
+    mutate(
+      tmp_text  = .data[[col]],
+      tmp_right = str_replace_all(tmp_text, "\\|.*$", ""),
+      tmp_found = str_detect(tmp_right, '\\('),
+      tmp_paren = if_else(tmp_found, str_extract(tmp_right, '\\(.*\\)|\\[.*\\]'), 'NO PARENTHETICAL STATEMENT FOUND'),
+      
+      # ---------------------------------
+      # General Removal of Non-Essential Annotations
+      # ---------------------------------
+      tmp_text = tmp_right |>
+        str_replace_all("(?i)re-induction","reinduction") |>
+        str_replace_all("Not on treatment","NOTRX") |>
+        str_remove_all("(?i)\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}") |>
+        str_remove_all("(?i)\\d{4}-\\d{2}-\\d{2}") |>
+        str_remove_all("\\d{1,2}[/-]\\d{4}") |>
+  
+        str_remove_all("\\(([^)]*(mg|daily|x\\d+|day|SQ|IV|PO)[^)]*)\\)") |>
+        
+        # str_remove_all("(?i)^Ind\\b") |>
+        str_remove_all("(?i)\\b\\d+\\s?mg(\\/m2)?\\b") |>
+        str_remove_all("(?i)\\bmg(\\/m2)?\\b") |>
+        str_remove_all("(?i)\\bm2\\b") |>
+        str_remove_all("(/)?m2") |>
+        str_remove_all("(/)?m²") |>
+        str_remove_all("(?i)\\b(daily|x\\d+\\s?days|Q\\d+\\s?days)\\b") |>
+        str_remove_all("(?i)\\b(Inj|IV|PO)\\b") |>
+        str_remove_all("(?i)\\b(IND|INDUCTION|RE-INDUCTION|REINDUCTION|CONSOLIDATION|MAINTENANCE|OUTSIDE|RESISTANT|REFRACTORY|RELAPSED|CLINICAL|TRIAL|PROTOCOL|DAY|DAYS|ON)\\b") |>
+        
+        str_replace_all("(?i)\\b(/?ARAC/?)\\b",  "+cytarabine ") |>
+        str_replace_all("(?i)\\b(/?IDA/?)\\b",   "+idarubicin ") |>
+        str_replace_all("(?i)\\b(/?DAUNO/?)\\b", "+daunorubicin"),
+      tmp_slash  = str_detect(tmp_text, '/'),
+      tmp_status = tmp_text
+    ) |>
+    
+    select(-tmp_found) |>
+    
+    mutate(tmp_text = tmp_status |>
+      # ---------------------------------
+      # Pattern-Based Simplification C#, S# S#C# x#
+      # ---------------------------------
+      str_remove_all("(?i)\\bS\\d{1,3}C\\d{1,3}\\b\\s+with\\b") |>
+        str_remove_all("(?i)\\bS\\d{1,3}C\\d{1,3}\\b") |>
+        str_remove_all("(?i)\\bC\\d{1,3}\\b\\s+with\\b") |>
+        str_remove_all("(?i)\\bC\\d{1,3}\\b") |>
+        str_remove_all("(?i)\\bS\\d{1,3}\\b") |>
+        str_remove_all("(?i)\\bX\\d{1,2}\\b") |>
+        
+        # ---------------------------------
+      # Simple Syntax Standardization
+      # ---------------------------------
+      str_replace_all("/", " with ") |>
+        str_replace_all("(?i)\\b(plus|and)\\b", "+") |>
+        str_replace_all('\\d+\\-\\d+', '')  |>
+        str_replace_all('\\s+\\d{4,}', '')  |>
+        
+        # ---------------------------------
+        # Synonym Normalization
+        # ---------------------------------
+        str_replace_all("(?i)low.?dose",                     "low dose") |>  # Normalize low dose
+        str_replace_all("(?i)high.?dose",                    "high dose") |>  # Normalize high dose
+  
+        
+        str_replace_all("(?i)\\bgemtuzumab ozogamicin\\b",  "GO") |>  # Normalize GO synonyms
+        str_replace_all("(?i)\\bgemtuzumab\\b",             "GO") |>  # Normalize GO synonyms
+        str_replace_all("(?i)\\bmylotarg\\b",               "GO") |>  # Normalize GO synonyms
+        
+        str_replace_all("(?i)\\bvyx\\w*",                   "vyxeos") |>  # Normalize vyx... to vyxeos
+        str_replace_all("(?i)\\bCPX[- ]?351\\b",            "vyxeos") |>  # Normalize CPX-351 to vyxeos
+        str_replace_all("(?i)vyxeos vyxeos",                "vyxeos") |>  # Normalize vyxeos
+        
+        str_replace_all("(?i)\\bvidaza\\b",                 "azacitidine") |>  # Normalize Vidaza
+        str_replace_all("(?i)\\bCC[- ]?486\\b",             "azacitidine") |>  # Normalize CC-486
+        str_replace_all("(?i)\\bOnureg\\b",                 "azacitidine") |>  # Normalize Onureg
+        str_replace_all("(?i)\\baza\\b",                    "azacitidine") |>  # Normalize azacitidine
+        str_replace_all("(?i)azacitadine",                  "azacitidine") |>  # Normalize azacitidine
+        str_replace_all("(?i)azacitidine",                  "azacitidine") |>  # Normalize azacitidine
+        str_replace_all("(?i)azacitidine solo",             "azacitidine") |>  # Normalize azacitidine
+        
+        str_replace_all("(?i)\\bVC\\b",                      "vincristine") |>
+        
+        str_replace_all("(?i)\\bORAL DECITABINE\\b",         "decitabine") |>
+        str_replace_all("(?i)\\bdacogen\\b",                 "decitabine") |>  # Normalize Dacogen to deci
+        str_replace_all("(?i)\\bDecitabine\\b",              "decitabine") |>  # Normalize Decitabine to deci
+        
+        
+        str_replace_all("(?i)\\bINV\\b",                     "decitabine+cedazuridine") |>
+        str_replace_all("(?i)\\bINQOVI\\b",                  "decitabine+cedazuridine") |>
+        str_replace_all("(?i)\\bASTX727\\b",                 "decitabine+cedazuridine") |>
+        str_replace_all("(?i)\\bDECITABINE/CEDAZURIDINE\\b", "decitabine+cedazuridine") |>
+
+        
+        
+        str_replace_all("(?i)\\bRuxolitinib\\b",             "ruxolitinib") |>
+        
+        str_replace_all("(?i)\\bDexamethasone\\b",           "dexamethasone") |>  # Normalize dexamethasone to deci
+        
+        str_replace_all("(?i)\\bdaunomycin\\b",              "daunorubicin") |>  # Normalize daunomycin to dauno
+        str_replace_all("(?i)\\bDuanorubicin\\w*",           "daunorubicin") |>  # Normalize daunorubicin
+        str_replace_all("(?i)\\Daunorubicin\\w*",            "daunorubicin") |>  # Normalize daunorubicin
+        str_replace_all("(?i)\\Danurubicin\\w*",             "daunorubicin") |>  # Normalize daunorubicin
+        str_replace_all("(?i)\\dauno\\w*",                   "daunorubicin") |>  # Normalize daunorubicin
+        str_replace_all("(?i)\\Danunorubicin\\w*",           "daunorubicin") |>  # Normalize daunorubicin
+        
+        
+        str_replace_all("(?i)\\b(ara\\-?c|arac)\\b",         "cytarabine") |>  # Normalize ara-c, arac to cytarabine
+        str_replace_all("(?i)\\bcytar\\w*",                  "cytarabine") |>  # Normalize cytarabine
+        str_replace_all("(?i)cytarabine",                    "cytarabine") |>  # Normalize cytarabine
+        
+
+        
+        str_replace_all("(?i)\\bida\\w*",                    "idarubicin") |>  # Normalize idarubicin
+        str_replace_all("(?i)\\bclad\\w*",                   "cladrabine") |>  # Normalize cladrabine
+        str_replace_all("(?i)\\bvene\\w*",                   "venetoclax") |>  # Normalize venetoclax
+        
+        str_replace_all("(?i)\\bmido\\w*",                   "midostaurin") |>  # Normalize midostaurin
+        str_replace_all("(?i)\\bmito\\w*",                   "mitoxantrone") |>  # Normalize mitoxantrone
+        str_replace_all("(?i)\\bmetho\\w*",                  "methotrexate") |>  # Normalize methotrexate
+        str_replace_all("(?i)\\bmtx\\w*",                    "methotrexate") |>  # Normalize methotrexate
+        
+        str_replace_all("(?i)\\bVincristine\\w*",            "vincristine") |>  # Normalize vincristine
+        str_replace_all("(?i)\\bPrednisone\\w*",             "prednisone") |>  # Normalize prednisone
+        
+        str_replace_all("(?i)\\bUproleselan\\w*",            "uproleselan") |>  # Normalize uproleselan
+        str_replace_all("(?i)\\b(GMI\\-?1271)\\b",           "uproleselan") |>  # Normalize uproleselan
+        str_replace_all("(?i)\\bhypercvad\\b",               "HyperCVAD") |>  # Normalize HyperCVAD
+        
+        str_replace_all("(?i)low.?dose\\scytarabine",        "LDAC") |>  # Normalize LDAC
+        str_replace_all("(?i)high.?dose\\scytarabine",       "HiDAC") |>  # Normalize HiDAC
+        str_replace_all("(?i)hidac",                         "HiDAC") |>  # Normalize HiDAC
+        
+        # ---------------------------------
+      # Cleanup and Deduplication
+      # ---------------------------------
+      str_remove_all("[^A-Za-z0-9+ ]") |>
+        str_replace_all("\\s*\\+\\s*", "+") |>
+        str_replace_all("(?i)(?<=\\b)with(?=\\b)", "+") |> # str_replace_all("\\s+with\\s+", "+") |>
+        str_replace_all("(?i)\\b(\\w+)\\+\\1\\b", "\\1") |>
+        str_replace_all("\\++", "+") |>
+        str_replace_all("^\\++", "") |>
+        str_replace_all("\\s\\++", " ") |>
+        str_replace_all("\\++$", "") |>
+        str_replace_all("NOTRX", "Not on treatment") |>
+    str_squish()) |>
+    mutate(tmp_text = case_when(
+      # Remove ARAC/IDA/DAUNO from 7+3
+      str_detect(tmp_text, "7\\+3") ~ tmp_text |>
+      str_remove_all("\\+?(cytarabine|idarubicin|daunorubicin)"),
+      
+      # Remove gcsf|cladrabine|cytarabine|methotrexate from GCLAM
+      str_detect(tmp_text, "GCLAM") ~ tmp_text |>
+      str_remove_all("\\+?(gcsf|cladrabine|cytarabine|mitoxantrone)"),
+      
+      # Remove fosfamide-doxorubicin-cisplatin from IAP
+      str_detect(tmp_text, "IAP") ~ tmp_text |>
+      str_remove_all("\\+?(ifosfamide|doxorubicin|cisplatin)"),
+      
+      # Default case — keep as is
+      TRUE ~ tmp_text)) |>
+    mutate(tmp_text = if_else(tmp_slash, tmp_right, tmp_text))
+  
+  rslt <- rslt |> mutate(!!new := tmp_text) |> relocate(!!new, .after = all_of(col)) |> select(-starts_with('tmp_'))
+  
+  return(rslt)
+}
+
+zz <- rx_stand(allarrival, 'treatment')
+```
+
+## SQL SERVER DATA
+
+Load Some Data from SQL Server
+
+```{r}
+# columns of interest
+patient_list_cols <- c("recordid",         "ptmrn",        "ptlastname", "ptbirthdate", "dxdate",    
+                       "dxmorphdate",      "dxmorphsrc",   "dxmorph",    "dxmorphnum",  "dxmorphcell",
+                       "dxflowdate",       "dxflowsrc",    "dxflow",     "dxflownum",
+                       "uploaded_to_ctms", "uploaded_to_ctms_date",      "firstarrival", "lastarrival",
+                       "firstinduction",   "patient_list_rectime",       "primary_subject_id")
+
+specialty_note_cols <- c("recordid", "ptmrn", "ptlastname",     
+                         "ptdeathdate", "ptlastchecked",
+                         "lastknownalive", "lastknownremission", "lastknownactivedisease",   
+                         "specialty_note_rectime")
+
+get_rc_dictionary('esteylist')
+
+# tables of interest
+patient_list <- sql_get_table('esteylist_label.patient_list') |> 
+    filter(ptlastname != 'PATIENT') |>
+    mutate(recordid = as.character(recordid)) |> 
+    select(any_of(patient_list_cols)) |>
+    group_rc_chkbox() |>
+    convert_date_cols()
+
+specialty_note <- sql_get_table('esteylist_label.specialty_note') |> 
+    filter(ptlastname != 'PATIENT') |>
+    mutate(recordid = as.character(recordid)) |>
+    select(any_of(specialty_note_cols)) |>
+    group_rc_chkbox() |>
+    convert_date_cols()
+
+project_specific_info <- sql_get_table('esteylist.project_specific_info') |> 
+    filter(ptlastname != 'PATIENT') |>
+    mutate(recordid = as.character(recordid)) |>
+    group_rc_chkbox() |>
+    convert_date_cols() |>
+    select(any_of(idlist), special_population)
+
+```
+
+## Pre-Arrivals from the Induction Table
+
+The induction table contains information from the Diagnosis REDCap that was ported to the Estey List REDCap instance.  These are supposed to be treatments from outside locations, but I believe are not always.  Once we sequence the arrivals if there are two that are very close or on the same date, we should exclude one or the other.
+
+```{r}
+# previous to first arrival induction information
+induction_cols <- c("recordid",
+    "ptmrn",
+    "ptlastname",
+    "arrivaltable",
+    "redcap_table",
+    "arrival",
+    "rxline",
+    "treatmentlocation",
+    "treatmentdate",
+    "treatment",
+    "responsedate",
+    "response",
+    "mrd",
+    "relapsedate",
+    "relapsedesc")
+
+# checking to assure that the induction table is for outside induction information
+# disease_features <- get_rc_table('diagnosis_for_aml_arrivals', 'disease_features')|>
+#   group_rc_chkbox() |>
+#   convert_date_cols() |>
+#   filter(df_inductionlocation == 2)
+# df_induction <- get_rc_table('diagnosis_for_aml_arrivals', 'induction') |>
+#   group_rc_chkbox() |>
+#   convert_date_cols() |>
+#   select(diagnosisid, ptmrn, recordid, starts_with('in_cycle1'))
+# xx <- inner_join(disease_features, df_induction, by = 'ptmrn') |>
+#   filter(!is.na(in_cycle1date))
+
+induction_ <- sql_get_table('esteylist_label.induction')
+induction <- induction_ |> 
+  # Apply the custom date conversion function across character columns
+  # Apply the custom grouping of REDCap checkbox fields into a single column
+  group_rc_chkbox() |>
+  mutate(recordid         = as.character(recordid)
+      , arrivaltable      = "induction"
+      , redcap_table      = "induction"
+      , orig_arrivaltable = "induction"
+      , arrival           = as.integer(-1)
+      , rxline            = 'Ind'
+      # , arrivaldate       = dxdate1
+      , treatmentlocation = ''
+      , treatmentdate     = dxtreatmentdate1
+      , treatment         = dxtreatment1
+      , responsedate      = dxresponsedate1
+      , response          = dxresponse1
+      , mrd               = dxmrd1
+      , relapsedate       = inductionrelapsedate
+      , relapse           = inductionrelapsenote
+      , treatmentdate     = as.Date(treatmentdate)
+    ) |> 
+  select(any_of(induction_cols)) |> 
+  left_join(patient_list,   by = join_by(recordid, ptmrn, ptlastname)) |>
+  left_join(specialty_note, by = join_by(recordid, ptmrn, ptlastname)) |>
+  mutate(treatmentlocation = if_else(str_detect(firstinduction, 'First AML induction here'), 'FHCC', 'OUT')) |>
+  filter(!is.na(treatmentdate)) |>
+  arrange(ptmrn, treatmentdate) |>
+  convert_date_cols() |>
+  select(recordid, ptmrn, ptlastname, treatmentdate, arrivaltable, redcap_table, arrival, everything())
+
+induction <- rx_stand(induction, 'treatment')
+
+
+print('Done')
+```
+
+## ARRIVALS 1-11
+
+The variables for arrivals 1 to 11 is identical with the exception of the suffix, i.e. arrivaldate1 vs arrivaldate3, or a1c1treatmentdate vs a3c1treatmentdate. So the patterns are:
+
+-   "<var><form number>", or
+-   "a<form number>c<cycle number><var>"
+
+```{r}
+tblcnt      <- 11
+
+arrival_    <- NULL
+notreat_    <- NULL
+prior_      <- NULL
+
+allarrival  <- NULL
+alloutnorx  <- NULL
+allprior    <- NULL
+alltreat    <- NULL
+allnotreat  <- NULL
+
+index <- n <- 0
+# Apply the function to the arrival dataframe
+arrival_ <- sql_get_table(glue('esteylist_label.arrival{n+1}'))
+  
+# looping through each table arrival1 up to arrival11
+for (n in 1:tblcnt-1) {
+  if (nrow(arrival_)==0) next
+  
+  if(index==0) {n=n+1} else {n=index}
+  # table for this loop
+  tbl <- paste0('arrival',  n)
+  cat(tbl, '\n')
+
+  arrival_ <- arrival_ |>
+    # remove test patients
+    filter(ptlastname != 'PATIENT') |>
+    # Apply the custom grouping of REDCap checkbox fields into a single column
+    group_rc_chkbox() |>
+    mutate(
+      # Convert recordid to character type  (not sure if this is needed?)
+      recordid = as.character(recordid)
+      # Add a row number at the start of the df
+      , row_number = row_number() + 10000*n,
+      # Add a tablename column
+      , arrivaltable = tbl
+      , redcap_table = tbl
+      , orig_arrivaltable = tbl
+    ) |>
+    # Apply the custom date conversion function across character columns
+    convert_date_cols() |>
+    # Apply multiple renames in one `rename_with`
+    rename_with(~ {
+      col_name <- . # col_name is a generic for all columns to meet the pattern
+      # Rename "a{n}" fields to "a_"
+      col_name <- gsub(glue("^a{n}"), "a_", col_name)
+      # Rename "arrival{n}note" fields specifically to "arrival_note"
+      col_name <- gsub(glue("^arrival{n}note$"), "arrival_note", col_name)
+      # Rename "arrival{n}" fields to "arrival"
+      col_name <- gsub(glue("^arrival{n}"), "arrival", col_name)
+      # Remove trailing "{n}" from other fields
+      col_name <- gsub(glue("{n}$"), "", col_name)
+      # Return the transformed column name
+      col_name
+    }) |>
+    mutate(across(everything(), as.character)) |>
+    mutate(  arrivalcategory=NA_character_
+             # using regular expressions to flag those that didn't get currative treatment
+             , currativerx = is_currative_rx(treatment)) |>
+    select(row_number, any_of(idlist)
+           , arrivaldate, arrival_rectime, arrivaltable, redcap_table
+           , treatment, starts_with('curr'), everything())
+  
+  cols <- arrival_ |> select(ends_with("date")) |> names()
+
+  arrival_ <- arrival_ |>
+    left_join(patient_list,   by = idlist) |>
+    left_join(specialty_note, by = idlist) |>
+    left_join(project_specific_info, by = idlist) |>
+    convert_columns('Date', cols) |>
+    # convert_date_cols(skip_cols = c("row_number")) |>
+    select(row_number, any_of(idlist), primary_subject_id
+           , special_population
+           , arrivalcategory
+           , arrival_rectime, arrivaltable, redcap_table, treatment, starts_with('curr'), everything())
+  
+  # outside and not currative
+  outnorx_ <- arrival_ |>
+    filter(!currativerx) |>
+    filter(a_treatmentlocation == 'OUT' | a_c1treatmentlocation == 'OUT') |>
+    mutate(arrivalcategory = 'outnotreat')
+
+  # identify rows not associated with a treatment at FHCC
+  # notreat_ <- arrival_ |> filter(str_detect(treatment, '(?i)pice|pall|consult|opinion|surv|2nd\\s|(no)+t?\\streat'))
+  notreat_ <- arrival_ |> filter(!currativerx) |> mutate(arrivalcategory='notreat')
+
+  # keep only rows where there was treatment at FHCC
+  treat_  <- arrival_ |> filter(currativerx) |> mutate(arrivalcategory='treated')
+
+  # remove prior treatments from the arrival data -- these are outside treatments that were missed above
+  prior_ <- bind_rows(
+    arrival_ |> filter(rxline == 'Treatment prior to AML induction'),
+    arrival_ |> filter(a_c1treatmentlocation == 'OUT' & a_treatmentlocation == ''),
+    arrival_ |> filter(a_treatmentlocation == 'OUT')
+  ) |>
+    distinct() |>
+    mutate(arrivalcategory = 'prearrival', arrivaltable = 'prearrival', redcap_table=tbl)
+
+  # Remove prior treatment data from the treated data
+  treat_ <- anti_join(treat_, prior_, by=join_by(row_number))
+
+  # Remove outside arrivals where no treatment occurred from prior and no treatment
+  prior_ <- anti_join(prior_, outnorx_, by = join_by(row_number))
+  notreat_ <- anti_join(notreat_, outnorx_, by = join_by(row_number))
+
+  # set empty structures in the first loop
+  if (n==1) {
+    allarrival <- alloutnorx <- allprior <- alltreat <- allnotreat <- as.data.frame(arrival_)[0,]
+  }
+  
+  # includes all attempts including arrival w/o treatment and outside treatment
+  allarrival <- bind_rows(allarrival, arrival_)
+  # the sum of these should match the all arrival records
+  alltreat   <- bind_rows(alltreat,   treat_)   # arrivals with treatment
+  allprior   <- bind_rows(allprior,   prior_)   # outside care prior to first arrival here
+  alloutnorx <- bind_rows(alloutnorx, outnorx_) # outside care, no treatment
+  allnotreat <- bind_rows(allnotreat, notreat_) # arrivals here not associated with treatment
+
+  # clear out tables from last loop
+  rm(list = ls(pattern = "^prior|^arrival|^treat|^combo|^outno|^empty"))
+  
+  # Next set
+  arrival_ <- sql_get_table(glue('esteylist_label.arrival{n+1}'))
+  
+}
+
+# this just puts the columns in order
+alloutnorx <- alloutnorx |>
+  mutate(category = 'alloutnorx', 
+         across(
+          .cols = intersect(names(allarrival), names(allprior)),
+          .fns  = ~ sql_convert_type(.x, alltreat[[cur_column()]]))) |>
+  convert_date_cols() |>
+  select(row_number, any_of(idlist), category, arrivaldate, arrival_rectime, arrivaltable, redcap_table
+                                   , treatment, currativerx, everything())
+
+allprior <- allprior |>
+  mutate(category = 'allprior', 
+         across(
+          .cols = intersect(names(allarrival), names(allprior)),
+          .fns  = ~ sql_convert_type(.x, alltreat[[cur_column()]]))) |>
+  convert_date_cols() |>
+  select(row_number, any_of(idlist), category, arrivaldate, arrival_rectime, arrivaltable, redcap_table
+                                   , treatment, currativerx, everything())
+allprior <- bind_rows(allprior, induction) |> mutate(category = 'allprior')
+
+alltreat <- alltreat |>
+  mutate(category = 'alltreat', 
+         across(
+          .cols = intersect(names(allarrival), names(alltreat)),
+          .fns  = ~ sql_convert_type(.x, alltreat[[cur_column()]]))) |>
+  convert_date_cols() |>
+  select(row_number, any_of(idlist), category, arrivaldate, arrival_rectime, arrivaltable, redcap_table
+                                   , treatment, currativerx, everything())
+allnotreat <- allnotreat |>
+  mutate(category = 'allnotreat', 
+         across(.cols = intersect(names(allarrival), names(allnotreat)),
+                .fns  = ~ sql_convert_type(.x, allnotreat[[cur_column()]]))) |>
+  convert_date_cols() |>
+  select(row_number, any_of(idlist), category, arrivaldate, arrival_rectime, arrivaltable, redcap_table
+                                   , treatment, currativerx, everything())
+
+allpreabstract <- anti_join(patient_list, allarrival) |>
+  left_join(project_specific_info |> select(any_of(idlist), special_population)) |>
+  mutate(category = 'Patient has not been abstracted in REDCap',
+         special_population = coalesce(special_population, ''),
+         arrivaltable = 'patient_list', 
+         redcap_table = 'patient_list') |>
+  filter(str_detect(special_population, '(?i)^older aml|mucor', negate=TRUE)) |>
+  filter( recordid > 0
+        & str_detect(ptlastname, "(?i)patient", negate=TRUE)
+        & uploaded_to_ctms == "Yes")
+
+
+allarrival   <- bind_rows(allarrival, allpreabstract) |>
+  mutate(across(
+           .cols = names(allarrival),
+           .fns  = ~ sql_convert_type(.x, alltreat[[cur_column()]]))) |>
+  mutate(category = case_when(
+      row_number %in% alloutnorx$row_number ~ "Outside Arrival without Treatment",
+      row_number %in% allprior$row_number   ~ "Prior Treatment Outside",
+      row_number %in% allnotreat$row_number ~ "No Treatment",
+      row_number %in% alltreat$row_number   ~ "FH Treatment",
+      row_number %in% allpreabstract        ~ "Not yet abstracted",
+      TRUE ~ category  # retain existing value if no match
+    )
+  ) |>
+  convert_date_cols() |>
+  select(row_number, any_of(idlist), category, arrivaldate, arrival_rectime, arrivaltable, redcap_table
+                                   , treatment, currativerx, everything())
+allarrival <- bind_rows(allarrival, induction |> mutate(category='Prior Treatment Outside'))
+
+rslt <- nrow(allarrival) == nrow(alloutnorx) + nrow(alltreat) + nrow(allprior) + nrow(allnotreat) + nrow(allpreabstract)
+cat("All records accounted for?", rslt)
+
+```
+
+
+## RG Number Identification
+
+Maybe this should be it's own project that deals more with lining up protocol names and patient enrollment in protocols and is based on CTMS downloads as well as frozen.glacier data.
+
+
+```{r}
+protocol_lkup <- sql_get_table('frozen.protocol_lkup') |>
+  filter(`Protocol.No.`!='RG1001098')
+
+xx <- inner_join(
+  allarrival |> 
+    select(any_of(idlist), row_number, treatment, arrivaltable, protocol, starts_with('rg')),
+  protocol_lkup |> 
+    mutate(rgnumber_ = `Protocol.No.`,
+           treatment = IRB), 
+    select(rgnumber_, `Protocol.No.`, IRB, Title, Short.Title, `PI.Name`),
+  by = 'treatment') |>
+  select(any_of(idlist), row_number, treatment, arrivaltable, starts_with('rg'),
+         rgnumber, , protocol, `Protocol.No.`, IRB, Title, Short.Title, `PI.Name`)
+
+yy <- inner_join(
+  allarrival |> 
+    select(any_of(idlist), row_number, treatment, arrivaltable, protocol, starts_with('rg')),
+  protocol_lkup |> 
+    mutate(rgnumber_ = `Protocol.No.`,
+           protocol = IRB), 
+    select(rgnumber_, `Protocol.No.`, IRB, Title, Short.Title, `PI.Name`),
+  by = 'protocol') |>
+  select(any_of(idlist), row_number, treatment, arrivaltable, starts_with('rg'),
+         rgnumber, , protocol, `Protocol.No.`, IRB, Title, Short.Title, `PI.Name`)
+
+
+zz <- allarrival |>
+  select(any_of(idlist), treatment, arrivaltable, starts_with('rg')) |>
+  inner_join(
+    protocol_lkup |>
+      mutate(treatment = `Short.Title`,
+             rgnumber_ = `Protocol.No.` ) |>
+      select(IRB, treatment, rgnumber_, `Protocol.No.`, Title, `Short.Title`, `PI.Name`),
+    by = "treatment"
+  ) |>
+  group_by(across(c(any_of(idlist), treatment, arrivaltable, rgnumber_, `Protocol.No.`, Title, `Short.Title`, `PI.Name`))) |>
+  summarise(
+    IRB_aliases = str_c(unique(IRB), collapse = "; "),
+    .groups = "drop"
+  )
+
+RG_Number_Updates <- bind_rows(xx, yy, zz) |> 
+  filter(is.na(rgnumber)) |> 
+  mutate(rgnumber = rgnumber_) |>
+  select(any_of(idlist), treatment, arrivaltable, 
+         rgnumber, `Protocol.No.`, Title, Short.Title, `PI.Name`) |>
+  distinct() |>
+  build_arrivalupdates()
+make_sheet(RG_Number_Updates, rcimportdir, filename='RG_Number_Updates', null_as_blank = TRUE)
+```
+## DUPLICATE CHECK
+
+There are a few records that have arrival dates in the induction data that are very close to FH REDCap arrival dates.  Most of those were consults at FH, so I filtered consults out of the comparison since it is reasonable to have a FH consult and then return to an outside location for treatment.
+
+I also filtered out arrivals that are not associated with treatment.
+
+```{r}
+# duplicate check
+allarrival_ <- allarrival |> 
+  filter(str_detect(rxline, "(?i)consult", negate=TRUE)) |>
+  filter(category != 'No Treatment') %>%
+  select(any_of(idlist), rxline, treatment, everything())
+
+allarrival_dups <- allarrival_ %>%
+  group_by(recordid) %>%
+  arrange(arrivaldate) %>%
+  mutate(next_arrival = lead(arrivaldate)) %>%
+  mutate(next_category = lead(category)) %>%
+  mutate(next_rxline = lead(rxline)) %>%
+  mutate(next_firstinduction = lead(firstinduction)) %>%
+  mutate(next_arrivaltable = lead(arrivaltable)) %>%
+  mutate(date_diff = as.numeric(next_arrival - arrivaldate)) %>%
+  filter(!is.na(date_diff) & abs(date_diff) <= 14) %>%
+  mutate(arrivalerror = paste0(
+    format(arrivaldate, "%Y-%m-%d"), " | ",
+    format(next_arrival, "%Y-%m-%d"), 
+    " (", date_diff, " days apart)"
+  )) %>%
+  select(recordid, date_diff, arrivalerror, 
+         arrivaldate, next_arrival, 
+         category, next_category,
+         rxline, next_rxline,
+         next_firstinduction, firstinduction,
+         next_arrivaltable, arrivaltable)
+
+allarrival <- allarrival %>%
+  left_join(allarrival_dups |> select(recordid, arrivalerror), by = "recordid") |>
+  select(any_of(idlist), arrivalerror, everything())
+```
+
+## FHCC FIRST/LAST ARRIVAL
+
+Maybe we should first eliminate any arrivals that are dups?
+
+```{r}
+# identify earliest FHCC arrival
+neatfreq(allarrival$category)
+
+# Take a look at the unique treatment texts by category "FH Treatment"
+Currative_Treatment_at_FHCC <- allarrival |>
+  filter(category=='FH Treatment') |>
+  group_by(category, treatment) |>
+  summarize(instances = n(),
+            .groups='drop') |>
+  arrange(desc(instances))
+
+# Take a look at the unique treatment texts by category "Prior Treatment Outside"
+Currative_Treatment_Outside <- allarrival |>
+  filter(category=='Prior Treatment Outside') |>
+  group_by(category, treatment) |>
+  summarize(instances = n(),
+            .groups='drop') |>
+  arrange(desc(instances))
+
+# cols <- names(allnotreat)[str_detect(names(allnotreat), "part")]
+# 
+# cols <- names(allnotreat)[
+#   endsWith(names(allnotreat), "date") &
+#   !str_detect(names(allnotreat), "part")
+# ]
+# allnotreat <- convert_columns(allnotreat, 'Date', cols)
+# 
+# signature for reference
+# convert_columns <- function(df, new_type, include_cols = NULL, exclude_cols = NULL, 
+#                             date_format = "%Y-%m-%d", verbose = FALSE, case_insensitive = FALSE)
+
+first_fhcc_arrival <- filter(allarrival, str_detect(category, '(?i)outside', negate=TRUE)) |>
+  mutate(min_date = pmin(arrivaldate, treatmentdate, na.rm = TRUE)) |>
+  select(recordid, min_date) |>
+  filter(!is.na(min_date)) |>
+  group_by(recordid) |>
+  summarise(firstfhccarrivaldate = min(min_date)  # Get min_date for each group
+    , .groups = 'drop')
+
+last_fhcc_arrival <- filter(allarrival, str_detect(category, '(?i)outside', negate=TRUE)) |>
+  mutate(max_date = pmax(arrivaldate, treatmentdate, na.rm = TRUE)) |>
+  select(recordid, max_date) |>
+  filter(!is.na(max_date)) |>
+  group_by(recordid) |>
+  summarise(lastfhccarrivaldate = max(max_date)         # Get max_date for each group            
+    , .groups = 'drop')
+
+
+first_known_arrival <- allarrival |>
+  mutate(min_date = pmin(arrivaldate, treatmentdate, na.rm = TRUE)) |>
+  select(recordid, min_date) |>
+  filter(!is.na(min_date)) |>
+  group_by(recordid) |>
+  summarise(firstknownarrivaldate = min(min_date)  # Get min_date for each group
+    , .groups = 'drop')
+
+last_known_arrival <- allarrival |>
+  mutate(max_date = pmax(arrivaldate, treatmentdate, na.rm = TRUE)) |>
+  select(recordid, max_date) |>
+  filter(!is.na(max_date)) |>
+  group_by(recordid) |>
+  summarise(lastknownarrivaldate = max(max_date)         # Get max_date for each group            
+    , .groups = 'drop')
+
+allarrival <- allarrival |>
+  left_join(first_fhcc_arrival) |>
+  left_join( last_fhcc_arrival) |>
+  left_join(first_known_arrival) |>
+  left_join( last_known_arrival)
+
+  # not sure this is needed ...
+allprior <- allprior |>
+  left_join(first_fhcc_arrival) |>
+  left_join( last_fhcc_arrival) |>
+  left_join(first_known_arrival) |>
+  left_join( last_known_arrival)
+
+cat('Done\n')
+
+```
+
+## LAG/LEAD VARS
+
+```{r}
+
+# make a copy in case I want to rerun
+allarrival_ <- allarrival
+# allarrival <- allarrival_
+
+allarrival <- arrange(
+    allarrival, recordid, arrivaldate, treatmentdate, arrivalnum, arrivaltable
+  ) |>
+  mutate(row = row_number()) |>
+  group_by(recordid, ptmrn, ptlastname) |>
+  mutate(sequence = row_number(),
+         arrivalcnt = n(),
+         prevarrivaldate=lag(arrivaldate),
+         prevarrivalcategory=lag(arrivalcategory),
+         prevtreatmentdate=lag(treatmentdate),
+         prevtreatment=lag(treatment),
+         prevrxline=lag(rxline),
+         nextarrivaldate=lead(arrivaldate),
+         nextarrivalcategory=lead(arrivalcategory),
+         nexttreatmentdate=lead(treatmentdate),
+         nexttreatment=lead(treatment),
+         nextrxline=lead(rxline)
+         ) |>
+  ungroup() |>
+  select(row, sequence, any_of(idlist), primary_subject_id
+         , category, arrivalcnt, firstfhccarrivaldate, lastfhccarrivaldate
+         , starts_with(c('arrival', 'prev', 'next')), everything(), -row_number)
+
+
+arrivaldate_after_treatmentdate <- allarrival |>
+  filter(str_detect(category, '(?i)(no\\streatment|without)', negate=TRUE)) |>
+  mutate(days_arrival_to_rx = as.integer(treatmentdate-arrivaldate),
+         days_morph_to_rx   = as.integer(treatmentdate-arrivalmorphdate)) |>
+  filter(days_arrival_to_rx < -7 & days_morph_to_rx < -7) |>
+  select(any_of(idlist), starts_with('days_'), category, 
+         arrivaldate, rxline, arrivalmorphdate, 
+         treatmentdate, treatment, 
+         nextarrivaldate, nextrxline)
+
+make_sheet(arrivaldate_after_treatmentdate, qcdir, 'data', 'suspicious arrival date')
+```
+
+## SAVE TO SQLSERVER
+
+Copy tables to SQL Server. The table **allarrival** shows treatment for patients, including those prior to arrival here.
+
+```{r eval=FALSE, include=FALSE}
+# Resize accommodate structure of all the records so that when we append columns won't be customized in width by the sql_insert_df()
+# tempsch <- 'scratch'
+sql_drop_tbl('frozen', 'allarrival')
+sql_insert_df(allarrival, 'frozen.allarrival', date_suffix='%Y%m', overwrite = FALSE, batch_size=nrow(allarrival)+10) 
+sql_desc_tbl('frozen.allarrival', desc='all patient arrivals FH, Outside, Treated and not treated')
+
+cat('SQL Server updated with allarrival')
+```
