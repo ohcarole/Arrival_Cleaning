@@ -125,8 +125,13 @@ get_pattern_map <- function() {
   gclam      <- paste0("^(?!.*\\bmini\\b)(?=.*(?:", gclam_base, "))")  
 
 
+  # Second-opinion / transplant-consult visits: not actual treatment even when
+  # the text mentions treatment-sounding words (Transplant, HCT ALLO, etc.).
+  consult <- "\\bopinion\\b|\\bconsult\\b"
+
   # 1) Backbone -> regex
   map <- c(
+    consult       = consult,
     reduced       = "\\breduced\\b",
     mini_gclam    = mini_gclam,
     gclam         = gclam, # see above
@@ -157,6 +162,7 @@ get_pattern_map <- function() {
   #    The 'std' backbone (7+3 and Vyxeos/CPX-351) sits in the 'int' intensity
   #    group: it carries backbone label "std" but intermediate intensity.
   groups <- list(
+    consult = c("consult"),
     high = c("gclam","clac","iap","flag_ida","hct","flam","mec"),
     int  = c("std","reduced","hidac","hypercvad"),
     low  = c("mini_gclam","ldac","bend_ida","hma","ven","sgn_cd33","single","tose"),
@@ -164,8 +170,9 @@ get_pattern_map <- function() {
     norx = c("norx")
   )
 
-  # 3) Global precedence (include apl/norx so you can prioritize them if desired)
-  precedence <- unique(c(groups$high, groups$int, groups$low, groups$apl, groups$norx, groups$unk))
+  # 3) Global precedence (consult trumps everything: a consult-only visit is not
+  #    treatment even when treatment terms appear in the same text)
+  precedence <- unique(c(groups$consult, groups$high, groups$int, groups$low, groups$apl, groups$norx, groups$unk))
 
   # 4) Pre-computed collapsed patterns per group (build for all groups)
   patterns <- lapply(groups, function(keys) paste0(unname(map[keys]), collapse = "|"))
@@ -192,11 +199,11 @@ get_pattern_map <- function() {
 #' @return data with a new column appended.
 classify_intensity <- function(data, col, new_col = NULL,
                                output   = c("label", "number"),
-                               priority =  c("high","int","low","apl","norx"),
+                               priority =  c("consult","high","int","low","apl","norx"),
                                ignore_case = TRUE) {
   stopifnot(is.data.frame(data))
   output   <- match.arg(output)
-  priority <- unique(match.arg(priority, c("high","int","low","apl","norx"), several.ok = TRUE))
+  priority <- unique(match.arg(priority, c("consult","high","int","low","apl","norx"), several.ok = TRUE))
 
   col_sym  <- rlang::ensym(col)
   col_name <- rlang::as_string(col_sym)
@@ -228,7 +235,9 @@ classify_intensity <- function(data, col, new_col = NULL,
     lab
   } else {
     # Map labels to ordinal numbers: low=1, int=2, high=3
-    map_num <- c(norx=0L, low=1L, int=2L, high=3L, apl=8L)
+    # consult is a non-treatment (second-opinion/consult) visit -> treated as
+    # no-treatment, same ordinal as norx (0).
+    map_num <- c(consult=0L, norx=0L, low=1L, int=2L, high=3L, apl=8L)
     unname(map_num[lab])
   }
 
@@ -290,6 +299,13 @@ add_backbone <- function(data, col, new_col = NULL, ignore_case = TRUE,
       hits <- names(rx_map)[which(row)]
       if (length(hits) == 0) NA_character_ else paste(hits, collapse = sep)
     })
+  }
+
+  # 'consult' short-circuits: a second-opinion / transplant-consult visit is not
+  # actual treatment, so it trumps every other backbone match in the same text
+  # (under both ties = "first" and ties = "all").
+  if ("consult" %in% colnames(det_mat)) {
+    out[det_mat[, "consult"]] <- "consult"
   }
 
   data[[new_col]] <- out
