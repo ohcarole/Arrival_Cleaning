@@ -68,6 +68,27 @@ get_pattern_map <- function() {
 
   standard7_3 <- paste(standard7_3, collapse = "|")
 
+  # Reusable drug-name fragments (word-bounded; case-insensitive at match time).
+  # Deliberately shareable so other patterns can reference them later; the lists
+  # are additive and not exhaustive. NOTE: the anthracycline fragment's
+  # "\\bIDA\\b" is word-bounded, so it does NOT disturb flag_ida / bend_ida,
+  # which require the "flag"/"bend" tokens in their (?=.*ida) lookaheads.
+  cytarabine_frag    <- "(?:\\bcytarabine\\b|\\bara-?c\\b|\\barac\\b)"
+  anthracycline_frag <- "(?:\\bdaunorubicin\\b|\\bidarubicin\\b|\\bida\\b)"
+
+  # 'std' extension (additive). Two ways to read as a 7+3-type induction:
+  #   1. numeric day-count shorthand: two 1-2 digit numbers joined by '+'
+  #      ("7+3", "5 + 1", "3+4", "2+3", ...).
+  #   2. an explicit cytarabine + anthracycline combination, any order, any
+  #      connector, with unrelated drugs alongside allowed.
+  # This is applied as a *gated* additive layer (see add_backbone /
+  # classify_intensity): it only labels rows that are otherwise uncategorized,
+  # so every backbone/intensity that already resolves stays exactly the same.
+  std_ext <- paste0(
+    "\\b\\d{1,2}\\s*\\+\\s*\\d{1,2}\\b",
+    "|(?=.*", cytarabine_frag, ")(?=.*", anthracycline_frag, ")"
+  )
+
   norx <- c("\\bnone\\b|\\bno\\s+treatment\\b|not\\s+treated|no\\s*rx",
             "\\bpall?.*|paliiative",
             "hospice|comfort|supportive",
@@ -182,7 +203,7 @@ get_pattern_map <- function() {
              patterns = patterns,
              flt3_tki = flt3_tki,
              bcrabl_tki = bcrabl_tki)
-  list(map = map, groups = groups, precedence = precedence, patterns = patterns, flt3_tki = flt3_tki, bcrabl_tki = bcrabl_tki)
+  list(map = map, groups = groups, precedence = precedence, patterns = patterns, flt3_tki = flt3_tki, bcrabl_tki = bcrabl_tki, std_ext = std_ext)
 }
 
 #' Classify AML treatment intensity from a free-text column
@@ -229,6 +250,15 @@ classify_intensity <- function(data, col, new_col = NULL,
       hit[is.na(hit)] <- FALSE
       lab[is.na(lab) & hit] <- lvl
     }
+  }
+
+  # Additive 'std' extension -> intermediate ('int') intensity, matching the
+  # existing 7+3/Vyxeos bucket. Gated to rows the priority pass left unlabeled,
+  # so every intensity that already resolves stays exactly the same.
+  if (!is.null(pm$std_ext)) {
+    ext_hit <- stringr::str_detect(txt, stringr::regex(pm$std_ext, ignore_case = ignore_case))
+    ext_hit[is.na(ext_hit)] <- FALSE
+    lab[is.na(lab) & ext_hit] <- "int"
   }
 
   data[[new_col]] <- if (output == "label") {
@@ -306,6 +336,16 @@ add_backbone <- function(data, col, new_col = NULL, ignore_case = TRUE,
   # (under both ties = "first" and ties = "all").
   if ("consult" %in% colnames(det_mat)) {
     out[det_mat[, "consult"]] <- "consult"
+  }
+
+  # Additive 'std' extension: label otherwise-uncategorized rows that read as a
+  # cytarabine+anthracycline / numeric day-count induction (e.g. "ARA-C +
+  # Daunorubicin", "5 + 1") as backbone 'std'. Gated to NA rows only, so every
+  # already-mapped backbone is preserved exactly (strictly additive).
+  if (!is.null(pm$std_ext)) {
+    ext_hit <- stringr::str_detect(txt, stringr::regex(pm$std_ext, ignore_case = ignore_case))
+    ext_hit[is.na(ext_hit)] <- FALSE
+    out[is.na(out) & ext_hit] <- "std"
   }
 
   data[[new_col]] <- out
