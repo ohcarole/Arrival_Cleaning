@@ -194,6 +194,14 @@ induction <- induction_ |>
 
 induction <- rx_stand(induction, 'treatment')
 
+# delete dated copies from old runs
+rm(list=ls(pattern = '^induction_202'))
+
+# make a dated backup copy in case we are debugging
+induction_backup_name.1 <- paste0('induction_', as.character(now()))
+assign(induction_backup_name.1, induction)
+induction <- get(induction_backup_name.1)
+
 print('Done')
 ```
 
@@ -310,6 +318,8 @@ for (n in 1:tblcnt-1) {
 
 }
 
+allarrival <- allarrival |> select(any_of(idlist), arrivalnum, rxline, everything())
+
 ```
 ## JOIN OUTSIDE INDUCTION TO ARRIVALS
 
@@ -385,7 +395,6 @@ neatfreq(allarrival$category)
 # Fix: coerce every column that is Date in EITHER frame (and common to both) on
 # BOTH sides using as_date_safe(), which tries known formats and reports parse
 # failures instead of dropping them silently.
-induction  <- induction_ # reset in case I am debugging
 
 date_cols <- union(
   names(allarrival)[vapply(allarrival, inherits, logical(1), "Date")],
@@ -415,269 +424,15 @@ dups <- allarrival |>
 rm(list=ls(pattern = '^allarrival_202'))
 
 # make a dated backup copy in case we are debugging
-backup_name.1 <- paste0('allarrival_', as.character(now()))
-assign(backup_name.1, allarrival)
-allarrival <- get(backup_name.1)
+allarrival_backup_name.1 <- paste0('allarrival_', as.character(now()))
+assign(allarrival_backup_name.1, allarrival)
+allarrival <- get(allarrival_backup_name.1)
 ```
-
-```{r eval=FALSE, include=FALSE}
-# make sure the exploded dictionary is in scope
-local_ <- .pkg_env
-get_rc_dictexp('esteylist')
-local_$rcdd_exp = rcdd_exp
-
-tblcnt      <- 11
-
-arrival_    <- NULL
-notreat_    <- NULL
-prior_      <- NULL
-
-allarrival  <- NULL
-alloutnorx  <- NULL
-allprior    <- NULL
-alltreat    <- NULL
-allnotreat  <- NULL
-
-index <- n <- 0
-
-# Apply the function to the arrival dataframe
-# zeroth table is empty
-arrival_ <- get_rc_table('esteylist', 'arrival1')[0,]
-  
-# looping through each table arrival1 up to arrival11
-for (n in 1:tblcnt-1) {
-# for (n in 1:2) {
-  
-  # designed to allow stepping through easier
-  if(index==0) {n=n+1} else {n=index}
-
-  # table for this loop
-  tbl <- paste0('arrival',  n)
-  arrival_ <- get_rc_table('esteylist', tbl)
-
-  if (nrow(arrival_)==0) {
-    cat("Skipping empty arrival ", tbl)
-    next
-  } else {
-    cat(tbl, '\n')
-  }
-
-  arrival_ <- arrival_ |>
-    
-    # remove test patients
-    filter(ptlastname != 'PATIENT') |>
-    # Apply the custom grouping of REDCap checkbox fields into a single column
-    group_rc_chkbox() |>
-    mutate(
-      # Convert recordid to character type  (not sure if this is needed?)
-      recordid = as.character(recordid)
-      # Add a row number at the start of the df
-      , row_number = row_number() + 10000*n,
-      # Add a tablename column
-      , arrivaltable = tbl
-      , redcap_table = tbl
-      , orig_arrivaltable = tbl
-    ) |>
-    # Apply the custom date conversion function across character columns
-    convert_date_cols() |>
-    # Apply multiple renames in one `rename_with`
-    rename_with(~ {
-      col_name <- . # col_name is a generic for all columns to meet the pattern
-      # Rename "a{n}" fields to "a_"
-      col_name <- gsub(glue("^a{n}"), "a_", col_name)
-      # Rename "arrival{n}note" fields specifically to "arrival_note"
-      col_name <- gsub(glue("^arrival{n}note$"), "arrival_note", col_name)
-      # Rename "arrival{n}_" fields to "arrival_"
-      col_name <- gsub(glue("^arrival{n}_"), "arrival_", col_name)
-      # Rename "arrival{n}" fields to "arrival_"
-      col_name <- gsub(glue("^arrival{n}"), "arrival_", col_name)
-      # Remove trailing "{n}" from other fields
-      col_name <- gsub(glue("{n}$"), "", col_name)
-      # Return the transformed column name
-      col_name
-    }) |>
-    mutate(across(everything(), as.character)) |>
-    mutate(  arrivalcategory=NA_character_
-             # using regular expressions to flag those that didn't get currative treatment at fhcc
-             , currativerx_fhcc = is_currative_rx_fhcc(treatment)) |>
-    select(row_number, any_of(idlist)
-           , any_of(c('arrivaldate', 'arrival_rectime', 'arrivaltable')), 
-           redcap_table, treatment, starts_with('curr'), everything())
-  
-  cols <- arrival_ |> select(ends_with("date")) |> names()
-
-  arrival_ <- arrival_ |>
-    left_join(patient_list,   by = idlist) |>
-    left_join(specialty_note, by = idlist) |>
-    left_join(project_specific_info, by = idlist) |>
-    convert_columns('Date', cols) |>
-    # convert_date_cols(skip_cols = c("row_number")) |>
-    select(row_number, any_of(idlist), primary_subject_id
-           , starts_with('special_population_')
-           , any_of(c('arrivalcategory', 'arrival_rectime', 'arrivaltable'))
-           , redcap_table, treatment, starts_with('curr'), everything())
-  
-  # # outside and not currative
-  # outnorx_ <- arrival_ |>
-  #   filter(!currativerx_fhcc) |>
-  #   filter(a_treatmentlocation == 'OUT' | a_c1treatmentlocation == 'OUT') |>
-  #   mutate(arrivalcategory = 'outnotreat')
-  # 
-  # # identify rows not associated with a treatment at FHCC
-  # # notreat_ <- arrival_ |> filter(str_detect(treatment, '(?i)pice|pall|consult|opinion|surv|2nd\\s|(no)+t?\\streat'))
-  # notreat_ <- arrival_ |> filter(!currativerx_fhcc) |> mutate(arrivalcategory='notreat')
-  # 
-  # # keep only rows where there was treatment at FHCC
-  # treat_  <- arrival_ |> filter(currativerx_fhcc) |> mutate(arrivalcategory='treated')
-  # 
-  # # remove prior treatments from the arrival data -- these are outside treatments that were missed above
-  # prior_ <- bind_rows(
-  #   arrival_ |> filter(rxline == 'Treatment prior to AML induction'),
-  #   arrival_ |> filter(a_c1treatmentlocation == 'OUT' & a_treatmentlocation == ''),
-  #   arrival_ |> filter(a_treatmentlocation == 'OUT')
-  # ) |>
-  #   distinct() |>
-  #   mutate(arrivalcategory = 'prearrival', arrivaltable = 'prearrival', redcap_table=tbl)
-  # 
-  # # Remove prior treatment data from the treated data
-  # treat_ <- anti_join(treat_, prior_, by=join_by(row_number))
-  # 
-  # # Remove outside arrivals where no treatment occurred from prior and no treatment
-  # prior_ <- anti_join(prior_, outnorx_, by = join_by(row_number))
-  # notreat_ <- anti_join(notreat_, outnorx_, by = join_by(row_number))
-
-  # set empty structures in the first loop
-  if (n==1) {
-    allarrival <- alloutnorx <- allprior <- alltreat <- allnotreat <- as.data.frame(arrival_)[0,]
-  }
-  
-  # includes all attempts including arrival w/o treatment and outside treatment
-  allarrival <- bind_rows(allarrival, arrival_)
-  # the sum of these should match the all arrival records
-  # alltreat   <- bind_rows(alltreat,   treat_)   # arrivals with treatment
-  # allprior   <- bind_rows(allprior,   prior_)   # outside care prior to first arrival here
-  # alloutnorx <- bind_rows(alloutnorx, outnorx_) # outside care, no treatment
-  # allnotreat <- bind_rows(allnotreat, notreat_) # arrivals here not associated with treatment
-
-  # clear out tables from last loop
-  rm(list = ls(pattern = "^prior|^arrival|^treat|^combo|^outno|^empty"))
-  
-  # # Next set
-  # tbl = paste0('arrival',  n+1)  
-  # arrival_ <- get_rc_table('esteylist', tbl)
-  
-}
-
-# # this just puts the columns in order
-# alloutnorx <- alloutnorx |>
-#   mutate(category = 'alloutnorx', 
-#          across(
-#           .cols = intersect(names(allarrival), names(allprior)),
-#           .fns  = ~ sql_convert_type(.x, alltreat[[cur_column()]]))) |>
-#   convert_date_cols() |>
-#   select(row_number, 
-#          any_of(c(idlist, 'category', 'arrivaldate', 'arrival_rectime', 'arrivaltable'
-#                 , 'redcap_table', 'treatment', 'currativerx_fhcc'))
-#                 , everything())
-# 
-# allprior <- allprior |>
-#   mutate(category = 'allprior', 
-#          across(
-#           .cols = intersect(names(allarrival), names(allprior)),
-#           .fns  = ~ sql_convert_type(.x, alltreat[[cur_column()]]))) |>
-#   convert_date_cols() |>
-#   select(row_number, 
-#          any_of(c(idlist, 'category', 'arrivaldate', 'arrival_rectime', 'arrivaltable'
-#                 , 'redcap_table', 'treatment', 'currativerx_fhcc'))
-#                 , everything())
-# allprior <- bind_rows(allprior, induction) |> mutate(category = 'allprior')
-# 
-# alltreat <- alltreat |>
-#   mutate(category = 'alltreat', 
-#          across(
-#           .cols = intersect(names(allarrival), names(alltreat)),
-#           .fns  = ~ sql_convert_type(.x, alltreat[[cur_column()]]))) |>
-#   convert_date_cols() |>
-#   select(row_number, 
-#          any_of(c(idlist, 'category', 'arrivaldate', 'arrival_rectime', 'arrivaltable'
-#                 , 'redcap_table', 'treatment', 'currativerx_fhcc'))
-#                 , everything())
-# allnotreat <- allnotreat |>
-#   mutate(category = 'allnotreat', 
-#          across(.cols = intersect(names(allarrival), names(allnotreat)),
-#                 .fns  = ~ sql_convert_type(.x, allnotreat[[cur_column()]]))) |>
-#   convert_date_cols() |>
-#   select(row_number, 
-#          any_of(c(idlist, 'category', 'arrivaldate', 'arrival_rectime', 'arrivaltable'
-#                 , 'redcap_table', 'treatment', 'currativerx_fhcc'))
-#                 , everything())
-
-psi <- project_specific_info |> select(any_of(idlist), starts_with('special_population_'))
-
-allpreabstract <- anti_join(patient_list, allarrival) |>
-  left_join(psi) |>
-  mutate(category = 'Patient has not been abstracted in REDCap',
-         special_population = coalesce(special_population, ''),
-         arrivaltable = 'patient_list',
-         redcap_table = 'patient_list') |>
-  filter(str_detect(special_population, '(?i)^older aml|mucor', negate=TRUE)) |>
-  filter( recordid > 0
-        & str_detect(ptlastname, "(?i)patient", negate=TRUE)
-        & uploaded_to_ctms == "Yes")
-
-
-allarrival   <- bind_rows(allarrival, allpreabstract) |>
-  mutate(across(
-           .cols = names(allarrival),
-           .fns  = ~ sql_convert_type(.x, alltreat[[cur_column()]]))) |>
-  mutate(category = case_when(
-      row_number %in% alloutnorx$row_number ~ "Outside Arrival without Treatment",
-      row_number %in% allprior$row_number   ~ "Prior Treatment Outside",
-      row_number %in% allnotreat$row_number ~ "No Treatment",
-      row_number %in% alltreat$row_number   ~ "FH Treatment",
-      row_number %in% allpreabstract        ~ "Not yet abstracted",
-      TRUE ~ category  # retain existing value if no match
-    )
-  ) |>
-  convert_date_cols() |>
-  select(row_number, 
-         any_of(c(idlist, 'category', 'arrivaldate', 'arrival_rectime', 'arrivaltable'
-                , 'redcap_table', 'treatment', 'currativerx_fhcc'))
-                , everything())
-
-# Align date-column types across both frames before the row-bind (see the
-# earlier bind for the full root-cause note): coerce every column that is Date
-# in EITHER frame (and common to both) on BOTH sides with as_date_safe(), which
-# tries known formats and surfaces parse failures instead of silent NA.
-date_cols <- union(
-  names(allarrival)[vapply(allarrival, inherits, logical(1), "Date")],
-  names(induction )[vapply(induction , inherits, logical(1), "Date")]
-)
-date_cols  <- intersect(date_cols, intersect(names(allarrival), names(induction)))
-allarrival <- allarrival |> mutate(across(any_of(date_cols), as_date_safe))
-induction  <- induction  |> mutate(across(any_of(date_cols), as_date_safe))
-
-allarrival <- bind_rows(allarrival, induction |> mutate(category='Prior Treatment Outside')) |>
-  mutate(row_number=row_number()+10000,
-    currativerx_any  = coalesce(currativerx_fhcc, is.na(currativerx_fhcc) & arrivaltable=="induction"))
-
-rslt <- nrow(allarrival) == nrow(alloutnorx) + nrow(alltreat) + nrow(allprior) + nrow(allnotreat) + nrow(allpreabstract)
-cat("All records accounted for?", rslt)
-
-rm(list=ls(pattern = '^allarrival_2025'))
-
-backup_name.1 <- paste0('allarrival_', as.character(now()))
-assign(backup_name.1, allarrival)
-allarrival <- get(backup_name.1)
-```
-
 
 ## CATEGORIZE INTENSITY, BACKBONE, TKI's
 
 ```{r}
-zz<- get(backup_name.1)
-rm(allarrival)
-allarrival <- get(backup_name.1) |> 
+allarrival <- get(allarrival_backup_name.1) |> 
   filter(str_detect(arrivaltable, "patient_list", negate=TRUE)) |>
   mutate(arrival_num = case_when(
       arrivaltable == "induction" ~ 0L,
@@ -715,7 +470,7 @@ treatment_detail <- allarrival |>
 
 treatment_total <- treatment_detail |>
   summarise(
-    treatmentbackbone_calc   = "All Rx Combinations",
+    treatmentbackbone_calc   = "All Backbones",
     treatmentintensity_calc  = "All Intensities",
     n                        = sum(as.numeric(n)),
     treatment_type_summary   = "All Rx Combinations",
@@ -786,6 +541,20 @@ classified_treatment <- intensity_wide |>
 
 rc_classified_treatment <- get_rc_report('esteylist', 386188)
 
+# reviewing results for a subset of the population, patients who are in the language barriers project
+lang_review = TRUE
+if (lang_review == TRUE) {
+  langdf <- get_rc_report('esteylist', 381802) |> select(recordid, ptmrn, ptlastname)
+  lang_update = left_join(langdf, classified_treatment |> select(any_of(idlist), treatmentintensity_calc1, treatmentbackbone_calc1), by=idlist)
+  make_sheet(lang_update, rcimportdir, 
+             filename = 'lang_classified_treatment_import', 
+             time=TRUE, 
+             overwrite = TRUE, 
+             null_as_blank = TRUE)  
+}
+
+
+
 # columns to compare, excluding the ID fields if you want
 common_cols <- intersect(names(classified_treatment), names(rc_classified_treatment))
 compare_cols <- setdiff(common_cols, idlist)
@@ -827,7 +596,7 @@ join_by <- c(idlist, 'row_number')
 
 allarrival <- allarrival |> select(any_of(join_by), ends_with(c('calc','tki')))
 
-allarrival <- get(backup_name.1) %>%
+allarrival <- get(allarrival_backup_name.1) %>%
   left_join(allarrival, by=join_by, suffix = c(".x", "")) |>
   select(any_of(names(allarrival)), treatment, arrivaltable, category, everything(), -ends_with('.x')) |>
   mutate(category=if_else(arrivaltable == 'patient_list', 'Abstraction of Arrivals not Complete', category))
