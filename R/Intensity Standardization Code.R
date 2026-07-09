@@ -242,23 +242,33 @@ classify_intensity <- function(data, col, new_col = NULL,
 
   txt <- dplyr::coalesce(as.character(data[[col_name]]), "")
 
+  # std_ext contributes a real 'int' signal (the 7+3/Vyxeos bucket), so it can
+  # win over lower-priority matches, e.g. hma(low)+cytarabine+anthracycline ->
+  # "int". Protected exception: rows already matching apl / norx / consult are
+  # left untouched (an ATRA+ATO APL string stays "apl" even with cyt+ida).
+  ext_int <- rep(FALSE, length(txt))
+  if (!is.null(pm$std_ext)) {
+    ext_hit <- stringr::str_detect(txt, stringr::regex(pm$std_ext, ignore_case = ignore_case))
+    ext_hit[is.na(ext_hit)] <- FALSE
+    protected <- rep(FALSE, length(txt))
+    for (g in c("apl", "norx", "consult")) {
+      if (!is.null(rx[[g]])) {
+        ph <- stringr::str_detect(txt, rx[[g]]); ph[is.na(ph)] <- FALSE
+        protected <- protected | ph
+      }
+    }
+    ext_int <- ext_hit & !protected
+  }
+
   # Resolve by priority: first level that matches wins
   lab <- rep(NA_character_, length(txt))
   for (lvl in priority) {
     if (!is.null(rx[[lvl]])) {              # <-- crucial guard
       hit <- stringr::str_detect(txt, rx[[lvl]])
       hit[is.na(hit)] <- FALSE
+      if (lvl == "int") hit <- hit | ext_int   # std_ext counts as int
       lab[is.na(lab) & hit] <- lvl
     }
-  }
-
-  # Additive 'std' extension -> intermediate ('int') intensity, matching the
-  # existing 7+3/Vyxeos bucket. Gated to rows the priority pass left unlabeled,
-  # so every intensity that already resolves stays exactly the same.
-  if (!is.null(pm$std_ext)) {
-    ext_hit <- stringr::str_detect(txt, stringr::regex(pm$std_ext, ignore_case = ignore_case))
-    ext_hit[is.na(ext_hit)] <- FALSE
-    lab[is.na(lab) & ext_hit] <- "int"
   }
 
   data[[new_col]] <- if (output == "label") {
@@ -321,6 +331,21 @@ add_backbone <- function(data, col, new_col = NULL, ignore_case = TRUE,
     colnames(det_mat) <- names(rx_map)[1]
   }
 
+  # std_ext participates as an additional 'std' signal, so it combines with any
+  # lower-priority backbone already present (e.g. hma -> "std; hma", ordered by
+  # precedence) instead of only firing on otherwise-uncategorized rows.
+  # Protected exception: rows already matching apl (atra) / norx / consult are
+  # left completely alone (no std_ext addition), so e.g. an ATRA+ATO APL string
+  # that also contains cytarabine+idarubicin stays backbone "atra"/consult/norx.
+  if (!is.null(pm$std_ext) && "std" %in% colnames(det_mat)) {
+    ext_hit <- stringr::str_detect(txt, stringr::regex(pm$std_ext, ignore_case = ignore_case))
+    ext_hit[is.na(ext_hit)] <- FALSE
+    prot_cols <- intersect(c("atra", "norx", "consult"), colnames(det_mat))
+    protected <- if (length(prot_cols))
+      rowSums(det_mat[, prot_cols, drop = FALSE]) > 0 else rep(FALSE, nrow(det_mat))
+    det_mat[, "std"] <- det_mat[, "std"] | (ext_hit & !protected)
+  }
+
   out <- if (ties == "first") {
     idx <- max.col(det_mat * 1L, ties.method = "first")
     ifelse(rowSums(det_mat) == 0, NA_character_, names(rx_map)[idx])
@@ -336,16 +361,6 @@ add_backbone <- function(data, col, new_col = NULL, ignore_case = TRUE,
   # (under both ties = "first" and ties = "all").
   if ("consult" %in% colnames(det_mat)) {
     out[det_mat[, "consult"]] <- "consult"
-  }
-
-  # Additive 'std' extension: label otherwise-uncategorized rows that read as a
-  # cytarabine+anthracycline / numeric day-count induction (e.g. "ARA-C +
-  # Daunorubicin", "5 + 1") as backbone 'std'. Gated to NA rows only, so every
-  # already-mapped backbone is preserved exactly (strictly additive).
-  if (!is.null(pm$std_ext)) {
-    ext_hit <- stringr::str_detect(txt, stringr::regex(pm$std_ext, ignore_case = ignore_case))
-    ext_hit[is.na(ext_hit)] <- FALSE
-    out[is.na(out) & ext_hit] <- "std"
   }
 
   data[[new_col]] <- out
