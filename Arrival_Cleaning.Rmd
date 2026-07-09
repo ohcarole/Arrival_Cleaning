@@ -84,9 +84,9 @@ rmd_path <- "helper.Rmd"
 source_cache(file_path = rmd_path, source = TRUE) # source=TRUE is the default, here for clarity
 ```
 
-## SQL SERVER DATA
+## FIELDS OF INTEREST
 
-Load Some Data from SQL Server
+Load Some Data from REDCap
 
 ```{r}
 # columns of interest
@@ -101,33 +101,19 @@ specialty_note_cols <- c("recordid", "ptmrn", "ptlastname",
                          "lastknownalive", "lastknownremission", "lastknownactivedisease",   
                          "specialty_note_rectime")
 
+```
+
+## LOAD DATA DICTIONARY EXPANDED
+
+```{r}
 local_ <- .pkg_env
-get_rc_dictionary('esteylist', ddname = "rcdd_exp", reload = TRUE, explode = TRUE)
+get_rc_dictexp('esteylist')
 local_$rcdd_exp = rcdd_exp
 ```
 
-```{r eval=FALSE, include=FALSE}
-# tables of interest
-patient_list <- sql_get_table('esteylist_label.patient_list')
-patient_list <- sql_get_table('esteylist_label.patient_list') |> 
-    filter(ptlastname != 'PATIENT') |>
-    mutate(recordid = as.character(recordid)) |> 
-    select(any_of(patient_list_cols)) |>
-    convert_date_cols()
+## REDCAP DATA
 
-specialty_note <- sql_get_table('esteylist_label.specialty_note') |> 
-    filter(ptlastname != 'PATIENT') |>
-    mutate(recordid = as.character(recordid)) |>
-    select(any_of(specialty_note_cols)) |>
-    convert_date_cols()
-
-project_specific_info <- sql_get_table('esteylist.project_specific_info') |> 
-    filter(ptlastname != 'PATIENT') |>
-    mutate(recordid = as.character(recordid)) |>
-    group_rc_chkbox() |>
-    select(any_of(idlist), special_population)
-
-```
+Load Some Data from REDCap
 
 ```{r}
 # tables of interestpatient_list <- get_rc_table('esteylist', 'patient_list')
@@ -172,24 +158,9 @@ induction_cols <- c("recordid",
 
 induction_ <- get_rc_table('esteylist','induction')
 
-# zz <- induction <- induction_ |> group_rc_chkbox()
-
-
 local_ <- .pkg_env
 get_rc_dictexp('esteylist')
 local_$rcdd_exp <- rcdd_exp
-
-# tic("group_rc_chkbox_ timing")
-# zz <- induction <- induction_ |> group_rc_chkbox_()
-# toc()
-# 
-# tic("group_rc_chkbox timing")
-# zz <- induction <- induction_ |> group_rc_chkbox()
-# toc()
-# 
-# tic("group_rc_chkbox_dt timing")
-# zz <- induction <- induction_ |> group_rc_chkbox()
-# toc()
 
 induction <- induction_ |>
   mutate(recordid         = as.character(recordid)
@@ -223,7 +194,6 @@ induction <- induction_ |>
 
 induction <- rx_stand(induction, 'treatment')
 
-
 print('Done')
 ```
 
@@ -232,11 +202,7 @@ print('Done')
 The variables for arrivals 1 to 11 are identical with the exception of the suffix or prefix for cycles, i.e. arrivaldate1 vs arrivaldate3, or a1c1treatmentdate vs a3c1treatmentdate.
 
 ```{r}
-# make sure the exploded dictionary is in scope
-local_ <- .pkg_env
-get_rc_dictexp('esteylist')
-local_$rcdd_exp = rcdd_exp
-
+# the exploded dictionary should be in scope
 tblcnt      <- 11
 
 arrival_    <- NULL
