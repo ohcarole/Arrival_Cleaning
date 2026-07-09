@@ -271,13 +271,22 @@ classify_intensity <- function(data, col, new_col = NULL,
     }
   }
 
+  # General HCT force rule: a real transplant (the 'hct' pattern matched) sets
+  # intensity to "hct", overriding chemo intensity, regardless of what else the
+  # text mentions. consult (non-treatment visit) stays protected.
+  hct_hit     <- stringr::str_detect(txt, stringr::regex(pm$map[["hct"]],     ignore_case = ignore_case))
+  consult_hit <- stringr::str_detect(txt, stringr::regex(pm$map[["consult"]], ignore_case = ignore_case))
+  hct_hit[is.na(hct_hit)]         <- FALSE
+  consult_hit[is.na(consult_hit)] <- FALSE
+  lab[hct_hit & !consult_hit] <- "hct"
+
   data[[new_col]] <- if (output == "label") {
     lab
   } else {
-    # Map labels to ordinal numbers: low=1, int=2, high=3
+    # Map labels to ordinal numbers: low=1, int=2, high=3, hct=5 (transplant).
     # consult is a non-treatment (second-opinion/consult) visit -> treated as
     # no-treatment, same ordinal as norx (0).
-    map_num <- c(consult=0L, norx=0L, low=1L, int=2L, high=3L, apl=8L)
+    map_num <- c(consult=0L, norx=0L, low=1L, int=2L, high=3L, hct=5L, apl=8L)
     unname(map_num[lab])
   }
 
@@ -356,6 +365,14 @@ add_backbone <- function(data, col, new_col = NULL, ignore_case = TRUE,
     })
   }
 
+  # General HCT force rule: a real transplant (the 'hct' pattern matched)
+  # collapses the backbone to exactly "hct", fully replacing any combined list
+  # (unlike std_ext, hct does not combine). Applied before the consult override
+  # so a "transplant consult" visit still resolves to "consult".
+  if ("hct" %in% colnames(det_mat)) {
+    out[det_mat[, "hct"]] <- "hct"
+  }
+
   # 'consult' short-circuits: a second-opinion / transplant-consult visit is not
   # actual treatment, so it trumps every other backbone match in the same text
   # (under both ties = "first" and ties = "all").
@@ -364,6 +381,56 @@ add_backbone <- function(data, col, new_col = NULL, ignore_case = TRUE,
   }
 
   data[[new_col]] <- out
+  data
+}
+
+#' Force backbone/intensity for specific treatment strings from an override CSV
+#'
+#' Manual, clinician-curated overrides that win over ALL pattern logic (including
+#' the consult trump-all rule, the hct force rule, and apl/norx protections).
+#' Intended for cases the regex cannot disambiguate — e.g. fludarabine, which
+#' appears both in induction/salvage chemo and in transplant conditioning.
+#'
+#' The CSV must have columns: treatment, backbone_override, intensity_override,
+#' and (optional) note. Matching is EXACT but normalized on both sides:
+#' case-insensitive and whitespace-insensitive (trim + collapse internal runs of
+#' whitespace to a single space), so minor formatting differences still match.
+#'
+#' @param data          data.frame produced after add_backbone()/classify_intensity().
+#' @param col           Unquoted treatment text column (e.g. treatment).
+#' @param backbone_col  Name of the backbone column to overwrite (string).
+#' @param intensity_col Name of the intensity column to overwrite (string).
+#' @param override_path Path to the override CSV.
+#' @return data with matched rows' backbone/intensity forced to the override.
+apply_treatment_overrides <- function(data, col,
+                                      backbone_col  = "treatmentbackbone_calc",
+                                      intensity_col = "treatmentintensity_calc",
+                                      override_path = "data/treatment_overrides.csv") {
+  stopifnot(is.data.frame(data))
+  if (!file.exists(override_path)) {
+    warning("apply_treatment_overrides(): override file not found at '",
+            override_path, "' -- no overrides applied.")
+    return(data)
+  }
+
+  ov <- utils::read.csv(override_path, stringsAsFactors = FALSE, check.names = FALSE)
+  req <- c("treatment", "backbone_override", "intensity_override")
+  if (!all(req %in% names(ov))) {
+    stop("Override CSV must contain columns: ", paste(req, collapse = ", "))
+  }
+
+  norm_key <- function(x) stringr::str_squish(tolower(as.character(x)))
+  ov_key <- norm_key(ov$treatment)
+
+  col_name <- rlang::as_string(rlang::ensym(col))
+  row_key  <- norm_key(data[[col_name]])
+
+  idx <- match(row_key, ov_key)   # first matching override wins on duplicates
+  hit <- !is.na(idx)
+  if (any(hit)) {
+    data[[backbone_col]][hit]  <- ov$backbone_override[idx[hit]]
+    data[[intensity_col]][hit] <- ov$intensity_override[idx[hit]]
+  }
   data
 }
 

@@ -446,6 +446,8 @@ allarrival  <- add_backbone(allarrival, treatment, ties = "all")
 allarrival <- classify_intensity(allarrival, treatment, output = "label")
 # MARK TKI'S
 allarrival <- tag_tkis(allarrival)
+# MANUAL OVERRIDES (force backbone/intensity for specific treatment strings)
+allarrival <- apply_treatment_overrides(allarrival, treatment)
 # Arrange so that we can review the pertinent variables
 allarrival <- allarrival |> select(any_of(idlist), ends_with(c('calc','tki')), everything())
 
