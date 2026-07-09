@@ -728,6 +728,38 @@ allarrival <- tag_tkis(allarrival)
 # Arrange so that we can review the pertinent variables
 allarrival <- allarrival |> select(any_of(idlist), ends_with(c('calc','tki')), everything())
 
+treatment_detail <- allarrival |>
+  filter(arrivalnum == 1, !is.na(treatment)) |>
+  select(any_of(idlist), treatment,
+         treatmentbackbone_calc, treatmentintensity_calc) |>
+  group_by(
+    treatmentbackbone_calc,
+    treatmentintensity_calc
+  ) |>
+  summarise(
+    n = n(),
+    treatment_type_summary = paste(unique(treatment), collapse = "\n"),
+    .groups = "drop"
+  ) |>
+  mutate(
+    pct = 100 * n / sum(n),
+    pct = sprintf("%.2f", pct)   # format to two decimal places
+  ) |>
+  arrange(desc(n))
+
+treatment_total <- treatment_detail |>
+  summarise(
+    treatmentbackbone_calc   = "All Rx Combinations",
+    treatmentintensity_calc  = "All Intensities",
+    n                        = sum(as.numeric(n)),
+    treatment_type_summary   = "All Rx Combinations",
+    pct                      = sprintf("%.2f", 100)
+  )
+
+treatment_summary <- bind_rows(treatment_detail, treatment_total)
+
+make_sheet(treatment_summary, scrapdir, filename="intensity and backbone mapping summary")
+
 # All of the data have been gathered at this point, but all arrival is arranged
 # with one row per arrival, we need to go wide to accommodate the multiple
 # arrival forms in REDCap.
