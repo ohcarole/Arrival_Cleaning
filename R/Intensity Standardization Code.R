@@ -68,6 +68,27 @@ get_pattern_map <- function() {
 
   standard7_3 <- paste(standard7_3, collapse = "|")
 
+  # Reusable drug-name fragments (word-bounded; case-insensitive at match time).
+  # Deliberately shareable so other patterns can reference them later; the lists
+  # are additive and not exhaustive. NOTE: the anthracycline fragment's
+  # "\\bIDA\\b" is word-bounded, so it does NOT disturb flag_ida / bend_ida,
+  # which require the "flag"/"bend" tokens in their (?=.*ida) lookaheads.
+  cytarabine_frag    <- "(?:\\bcytarabine\\b|\\bara-?c\\b|\\barac\\b)"
+  anthracycline_frag <- "(?:\\bdaunorubicin\\b|\\bidarubicin\\b|\\bida\\b)"
+
+  # 'std' extension (additive). Two ways to read as a 7+3-type induction:
+  #   1. numeric day-count shorthand: two 1-2 digit numbers joined by '+'
+  #      ("7+3", "5 + 1", "3+4", "2+3", ...).
+  #   2. an explicit cytarabine + anthracycline combination, any order, any
+  #      connector, with unrelated drugs alongside allowed.
+  # This is applied as a *gated* additive layer (see add_backbone /
+  # classify_intensity): it only labels rows that are otherwise uncategorized,
+  # so every backbone/intensity that already resolves stays exactly the same.
+  std_ext <- paste0(
+    "\\b\\d{1,2}\\s*\\+\\s*\\d{1,2}\\b",
+    "|(?=.*", cytarabine_frag, ")(?=.*", anthracycline_frag, ")"
+  )
+
   norx <- c("\\bnone\\b|\\bno\\s+treatment\\b|not\\s+treated|no\\s*rx",
             "\\bpall?.*|paliiative",
             "hospice|comfort|supportive",
@@ -81,6 +102,19 @@ get_pattern_map <- function() {
             "\\bhome\\b",
             "\\bnothing\\b")
   norx <- paste(norx, collapse = "|")
+
+  # venetoclax backbone/agent detection (case-insensitive at match time).
+  # Captures: venetoclax, common typos (ventoclax/venotoclax), the "vene"
+  # shorthand, a standalone "ven" token, and trade/dev codes ABT-199 & GDC-0199.
+  # The standalone-token anchors (\\b...\\b) avoid false hits inside unrelated
+  # words such as "intravenous", "prevent", or "ventricular".
+  ven <- paste0(
+    "\\bvene\\w*",           # venetoclax, vene, and other vene* spellings
+    "|\\bven[eo]?toclax\\b", # ventoclax / venotoclax typos
+    "|\\bven\\d*\\b",        # standalone 'ven' token, incl. day-count suffix (Ven, Ven/Aza, VEN14, VEN21)
+    "|\\bABT[- ]?199\\b",    # ABT-199 / ABT199
+    "|\\bGDC[- ]?0199\\b"    # GDC-0199 / GDC0199
+  )
 
 
   # gclam_base = c("(?:gclam",
@@ -103,8 +137,8 @@ get_pattern_map <- function() {
     "\\bgcla\\b|\\bclam\\b",
     "\\bclag\\b|\\bclag\\s*-?\\s*m?\\b",
     "\\b2734\\b|\\bFH2734\\b|2734\\s*\\(?off",
-    "\\bFH10000\\b))",
-    "\\b7971\\b"
+    "\\bFH10000\\b)",   # closes only the inner (?: opened at "(?:gclam"; the
+    "\\b7971\\b"        # trailing "|\\b7971\\b" then sits inside the wrapper group
   )
   gclam_base <- paste(gclam_base, collapse = "|")
   
@@ -112,8 +146,13 @@ get_pattern_map <- function() {
   gclam      <- paste0("^(?!.*\\bmini\\b)(?=.*(?:", gclam_base, "))")  
 
 
+  # Second-opinion / transplant-consult visits: not actual treatment even when
+  # the text mentions treatment-sounding words (Transplant, HCT ALLO, etc.).
+  consult <- "\\bopinion\\b|\\bconsult\\b"
+
   # 1) Backbone -> regex
   map <- c(
+    consult       = consult,
     reduced       = "\\breduced\\b",
     mini_gclam    = mini_gclam,
     gclam         = gclam, # see above
@@ -124,8 +163,8 @@ get_pattern_map <- function() {
     flag_ida      = "(?=.*flag)(?=.*ida)|\\bflag\\b|\\bfai\\b",
     bend_ida      = "(?=.*bend)(?=.*ida)|2413",
     hma           = "azacitidine|azacitadine|\\baza\\b|\\bazac.*|\\bvidaza\\b|dacogen|decit|inqovi|onureg|2288|9019|2566\\s*\\(td\\)",
-    standard7_3   = standard7_3,
-    vyxeos        = "vyxeos|CPX\\s*-\\s*351|\\b(fh)?2642\\b",
+    ven           = ven,
+    std           = paste0(standard7_3, "|", "vyxeos|CPX\\s*-\\s*351|\\b(fh)?2642\\b"),
     flam          = "\\bflam\\b|2315",
     atra          = "\\batra\\b",
     hct           = "\\bhct\\b|\\ballo|\\btbi\\b|transplant|flu|\\b7617\\b|\\bbu(-|\\s|\\+)?cy\\b",
@@ -141,16 +180,20 @@ get_pattern_map <- function() {
     norx          = norx)
 
   # 2) Intensity-ish groupings (adding APL/NoRx bucket)
+  #    The 'std' backbone (7+3 and Vyxeos/CPX-351) sits in the 'int' intensity
+  #    group: it carries backbone label "std" but intermediate intensity.
   groups <- list(
+    consult = c("consult"),
     high = c("gclam","clac","iap","flag_ida","hct","flam","mec"),
-    int  = c("vyxeos","reduced","standard7_3","hidac","hypercvad"),
-    low  = c("mini_gclam","ldac","bend_ida","hma","sgn_cd33","single","tose"),
+    int  = c("std","reduced","hidac","hypercvad"),
+    low  = c("mini_gclam","ldac","bend_ida","hma","ven","sgn_cd33","single","tose"),
     apl  = c("atra"),
     norx = c("norx")
   )
 
-  # 3) Global precedence (include apl/norx so you can prioritize them if desired)
-  precedence <- unique(c(groups$high, groups$int, groups$low, groups$apl, groups$norx, groups$unk))
+  # 3) Global precedence (consult trumps everything: a consult-only visit is not
+  #    treatment even when treatment terms appear in the same text)
+  precedence <- unique(c(groups$consult, groups$high, groups$int, groups$low, groups$apl, groups$norx, groups$unk))
 
   # 4) Pre-computed collapsed patterns per group (build for all groups)
   patterns <- lapply(groups, function(keys) paste0(unname(map[keys]), collapse = "|"))
@@ -160,7 +203,7 @@ get_pattern_map <- function() {
              patterns = patterns,
              flt3_tki = flt3_tki,
              bcrabl_tki = bcrabl_tki)
-  list(map = map, groups = groups, precedence = precedence, patterns = patterns, flt3_tki = flt3_tki, bcrabl_tki = bcrabl_tki)
+  list(map = map, groups = groups, precedence = precedence, patterns = patterns, flt3_tki = flt3_tki, bcrabl_tki = bcrabl_tki, std_ext = std_ext)
 }
 
 #' Classify AML treatment intensity from a free-text column
@@ -177,11 +220,11 @@ get_pattern_map <- function() {
 #' @return data with a new column appended.
 classify_intensity <- function(data, col, new_col = NULL,
                                output   = c("label", "number"),
-                               priority =  c("high","int","low","apl","norx"),
+                               priority =  c("consult","high","int","low","apl","norx"),
                                ignore_case = TRUE) {
   stopifnot(is.data.frame(data))
   output   <- match.arg(output)
-  priority <- unique(match.arg(priority, c("high","int","low","apl","norx"), several.ok = TRUE))
+  priority <- unique(match.arg(priority, c("consult","high","int","low","apl","norx"), several.ok = TRUE))
 
   col_sym  <- rlang::ensym(col)
   col_name <- rlang::as_string(col_sym)
@@ -199,21 +242,51 @@ classify_intensity <- function(data, col, new_col = NULL,
 
   txt <- dplyr::coalesce(as.character(data[[col_name]]), "")
 
+  # std_ext contributes a real 'int' signal (the 7+3/Vyxeos bucket), so it can
+  # win over lower-priority matches, e.g. hma(low)+cytarabine+anthracycline ->
+  # "int". Protected exception: rows already matching apl / norx / consult are
+  # left untouched (an ATRA+ATO APL string stays "apl" even with cyt+ida).
+  ext_int <- rep(FALSE, length(txt))
+  if (!is.null(pm$std_ext)) {
+    ext_hit <- stringr::str_detect(txt, stringr::regex(pm$std_ext, ignore_case = ignore_case))
+    ext_hit[is.na(ext_hit)] <- FALSE
+    protected <- rep(FALSE, length(txt))
+    for (g in c("apl", "norx", "consult")) {
+      if (!is.null(rx[[g]])) {
+        ph <- stringr::str_detect(txt, rx[[g]]); ph[is.na(ph)] <- FALSE
+        protected <- protected | ph
+      }
+    }
+    ext_int <- ext_hit & !protected
+  }
+
   # Resolve by priority: first level that matches wins
   lab <- rep(NA_character_, length(txt))
   for (lvl in priority) {
     if (!is.null(rx[[lvl]])) {              # <-- crucial guard
       hit <- stringr::str_detect(txt, rx[[lvl]])
       hit[is.na(hit)] <- FALSE
+      if (lvl == "int") hit <- hit | ext_int   # std_ext counts as int
       lab[is.na(lab) & hit] <- lvl
     }
   }
 
+  # General HCT force rule: a real transplant (the 'hct' pattern matched) sets
+  # intensity to "hct", overriding chemo intensity, regardless of what else the
+  # text mentions. consult (non-treatment visit) stays protected.
+  hct_hit     <- stringr::str_detect(txt, stringr::regex(pm$map[["hct"]],     ignore_case = ignore_case))
+  consult_hit <- stringr::str_detect(txt, stringr::regex(pm$map[["consult"]], ignore_case = ignore_case))
+  hct_hit[is.na(hct_hit)]         <- FALSE
+  consult_hit[is.na(consult_hit)] <- FALSE
+  lab[hct_hit & !consult_hit] <- "hct"
+
   data[[new_col]] <- if (output == "label") {
     lab
   } else {
-    # Map labels to ordinal numbers: low=1, int=2, high=3
-    map_num <- c(norx=0L, low=1L, int=2L, high=3L, apl=8L)
+    # Map labels to ordinal numbers: low=1, int=2, high=3, hct=5 (transplant).
+    # consult is a non-treatment (second-opinion/consult) visit -> treated as
+    # no-treatment, same ordinal as norx (0).
+    map_num <- c(consult=0L, norx=0L, low=1L, int=2L, high=3L, hct=5L, apl=8L)
     unname(map_num[lab])
   }
 
@@ -267,6 +340,21 @@ add_backbone <- function(data, col, new_col = NULL, ignore_case = TRUE,
     colnames(det_mat) <- names(rx_map)[1]
   }
 
+  # std_ext participates as an additional 'std' signal, so it combines with any
+  # lower-priority backbone already present (e.g. hma -> "std; hma", ordered by
+  # precedence) instead of only firing on otherwise-uncategorized rows.
+  # Protected exception: rows already matching apl (atra) / norx / consult are
+  # left completely alone (no std_ext addition), so e.g. an ATRA+ATO APL string
+  # that also contains cytarabine+idarubicin stays backbone "atra"/consult/norx.
+  if (!is.null(pm$std_ext) && "std" %in% colnames(det_mat)) {
+    ext_hit <- stringr::str_detect(txt, stringr::regex(pm$std_ext, ignore_case = ignore_case))
+    ext_hit[is.na(ext_hit)] <- FALSE
+    prot_cols <- intersect(c("atra", "norx", "consult"), colnames(det_mat))
+    protected <- if (length(prot_cols))
+      rowSums(det_mat[, prot_cols, drop = FALSE]) > 0 else rep(FALSE, nrow(det_mat))
+    det_mat[, "std"] <- det_mat[, "std"] | (ext_hit & !protected)
+  }
+
   out <- if (ties == "first") {
     idx <- max.col(det_mat * 1L, ties.method = "first")
     ifelse(rowSums(det_mat) == 0, NA_character_, names(rx_map)[idx])
@@ -277,7 +365,72 @@ add_backbone <- function(data, col, new_col = NULL, ignore_case = TRUE,
     })
   }
 
+  # General HCT force rule: a real transplant (the 'hct' pattern matched)
+  # collapses the backbone to exactly "hct", fully replacing any combined list
+  # (unlike std_ext, hct does not combine). Applied before the consult override
+  # so a "transplant consult" visit still resolves to "consult".
+  if ("hct" %in% colnames(det_mat)) {
+    out[det_mat[, "hct"]] <- "hct"
+  }
+
+  # 'consult' short-circuits: a second-opinion / transplant-consult visit is not
+  # actual treatment, so it trumps every other backbone match in the same text
+  # (under both ties = "first" and ties = "all").
+  if ("consult" %in% colnames(det_mat)) {
+    out[det_mat[, "consult"]] <- "consult"
+  }
+
   data[[new_col]] <- out
+  data
+}
+
+#' Force backbone/intensity for specific treatment strings from an override CSV
+#'
+#' Manual, clinician-curated overrides that win over ALL pattern logic (including
+#' the consult trump-all rule, the hct force rule, and apl/norx protections).
+#' Intended for cases the regex cannot disambiguate — e.g. fludarabine, which
+#' appears both in induction/salvage chemo and in transplant conditioning.
+#'
+#' The CSV must have columns: treatment, backbone_override, intensity_override,
+#' and (optional) note. Matching is EXACT but normalized on both sides:
+#' case-insensitive and whitespace-insensitive (trim + collapse internal runs of
+#' whitespace to a single space), so minor formatting differences still match.
+#'
+#' @param data          data.frame produced after add_backbone()/classify_intensity().
+#' @param col           Unquoted treatment text column (e.g. treatment).
+#' @param backbone_col  Name of the backbone column to overwrite (string).
+#' @param intensity_col Name of the intensity column to overwrite (string).
+#' @param override_path Path to the override CSV.
+#' @return data with matched rows' backbone/intensity forced to the override.
+apply_treatment_overrides <- function(data, col,
+                                      backbone_col  = "treatmentbackbone_calc",
+                                      intensity_col = "treatmentintensity_calc",
+                                      override_path = "data/treatment_overrides.csv") {
+  stopifnot(is.data.frame(data))
+  if (!file.exists(override_path)) {
+    warning("apply_treatment_overrides(): override file not found at '",
+            override_path, "' -- no overrides applied.")
+    return(data)
+  }
+
+  ov <- utils::read.csv(override_path, stringsAsFactors = FALSE, check.names = FALSE)
+  req <- c("treatment", "backbone_override", "intensity_override")
+  if (!all(req %in% names(ov))) {
+    stop("Override CSV must contain columns: ", paste(req, collapse = ", "))
+  }
+
+  norm_key <- function(x) stringr::str_squish(tolower(as.character(x)))
+  ov_key <- norm_key(ov$treatment)
+
+  col_name <- rlang::as_string(rlang::ensym(col))
+  row_key  <- norm_key(data[[col_name]])
+
+  idx <- match(row_key, ov_key)   # first matching override wins on duplicates
+  hit <- !is.na(idx)
+  if (any(hit)) {
+    data[[backbone_col]][hit]  <- ov$backbone_override[idx[hit]]
+    data[[intensity_col]][hit] <- ov$intensity_override[idx[hit]]
+  }
   data
 }
 

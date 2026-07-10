@@ -24,6 +24,47 @@ compare_col_types <- function(df1, df2, target_class = "Date") {
 # date_cols <- compare_col_types(allarrival, induction)
 # date_cols
 
+# Safely coerce a vector to class Date.
+# Already-Date/POSIXt input is returned as a Date unchanged. Character input is
+# parsed by trying each format in `tryFormats` (ISO first, then common US
+# m/d/Y styles) so that non-ISO strings are NOT silently turned into NA the way
+# bare as.Date() does. Any value that still fails to parse is set to NA and a
+# warning reports the count and a few offending examples, so parse failures are
+# visible rather than silent.
+as_date_safe <- function(x,
+                         tryFormats = c("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y",
+                                        "%Y/%m/%d", "%d%b%Y")) {
+  if (inherits(x, "Date"))   return(x)
+  if (inherits(x, "POSIXt")) return(as.Date(x))
+
+  chr <- trimws(as.character(x))
+  chr[chr %in% c("", "NA", "N/A", ".")] <- NA_character_
+
+  parsed    <- as.Date(rep(NA_real_, length(chr)), origin = "1970-01-01")
+  remaining <- !is.na(chr)
+
+  for (fmt in tryFormats) {
+    if (!any(remaining)) break
+    attempt <- as.Date(chr[remaining], format = fmt)
+    ok      <- !is.na(attempt)
+    idx     <- which(remaining)[ok]
+    parsed[idx]    <- attempt[ok]
+    remaining[idx] <- FALSE
+  }
+
+  n_fail <- sum(!is.na(chr) & is.na(parsed))
+  if (n_fail > 0) {
+    examples <- utils::head(unique(chr[!is.na(chr) & is.na(parsed)]), 3)
+    warning(sprintf(
+      "as_date_safe(): %d value(s) could not be parsed to Date and were set to NA. Examples: %s",
+      n_fail, paste(examples, collapse = "; ")
+    ))
+  }
+  parsed
+}
+# sample call
+# allarrival <- allarrival |> mutate(across(any_of(date_cols), as_date_safe))
+
 # # Backbone patterns + high/low groupings
 # get_pattern_map <- function() {
 # 
