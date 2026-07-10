@@ -1,8 +1,25 @@
 treatment,backbone_override,intensity_override,note
-"Re-induction with Fludarabine + Cytarabine + Gemtuzumab","std_induction","int","Induction/salvage chemo, not conditioning; fludarabine here is part of FLAG-type re-induction"
-"Fludarabine + ARA-C + Idarubicin (FLAI) as part of treatment on protocol 9226","std_induction","int","Induction/salvage chemo (FLAI) on protocol 9226, not conditioning"
-"Fludarabine + Mylotarg + ARA-C","std_induction","int","Induction/salvage chemo (FLAG + gemtuzumab), not conditioning"
-"FAI (Fludarabine + ARA-C + IDA)","std_induction","int","Induction/salvage chemo (FAI), not conditioning"
-"Fludarabine + Melphalan","hct","hct","Transplant preparative/conditioning regimen"
-"cyclophosphamide + fludarabine","hct","hct","Transplant preparative/conditioning regimen"
-"Pre-transplant Conditioning with AT-211 Fludarabine + TBI per 9595 Protocol","hct","hct","Transplant preparative/conditioning regimen per protocol 9595"
+Re-induction with Fludarabine + Cytarabine + Gemtuzumab,std_induction,int,"Induction/salvage chemo, not conditioning; fludarabine here is part of FLAG-type re-induction"
+Fludarabine + ARA-C + Idarubicin (FLAI) as part of treatment on protocol 9226,std_induction,int,"Induction/salvage chemo (FLAI) on protocol 9226, not conditioning"
+Fludarabine + Mylotarg + ARA-C,std_induction,int,"Induction/salvage chemo (FLAG + gemtuzumab), not conditioning"
+FAI (Fludarabine + ARA-C + IDA),std_induction,int,"Induction/salvage chemo (FAI), not conditioning"
+Fludarabine + Melphalan,hct,hct,Transplant preparative/conditioning regimen
+cyclophosphamide + fludarabine,hct,hct,Transplant preparative/conditioning regimen
+Pre-transplant Conditioning with AT-211 Fludarabine + TBI per 9595 Protocol,hct,hct,Transplant preparative/conditioning regimen per protocol 9595
+Venetoclax / Decitabine,hma; ven,low,
+Ara-C 500mg ,single,int,
+Azcitidine - Cedazuridine (ASTX030),hma,low,
+Blinatumomab,single,low,
+Blood transfusions,norx,norx,
+BST 236 Clinical trial,single,int,
+BST 236/Aspacytarabine,single,int,
+BST-236,single,int,
+Clinical Trial: RG1121608 - BST-236 induction,single,int,
+CPX ,std_induction,int,
+CPX-351,std_induction,int,
+cytarabine + rituximab,single,low,
+Darbepoietin,single,low,
+Inquovi,hma,low,
+Pacritinib,single,low,
+Tibsovo 500mg PO daily,single,low,
+Transfusion dependent,norx,norx,
